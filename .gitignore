@@ -65,6 +65,9 @@ Screenshots/
 *.mp4
 *.mkv
 
+# Allow sway background
+!.config/sway/background.jpg
+
 # === OS Generated ===
 .viminfo
 .bash_history*
