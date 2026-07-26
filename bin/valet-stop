@@ -1,0 +1,9 @@
+#!/bin/bash
+echo "Stopping Laravel Valet..."
+valet stop
+
+echo "Resetting DNS to system default..."
+sudo systemctl restart systemd-resolved
+
+echo "✅ Valet stopped, and internet restored."
+
