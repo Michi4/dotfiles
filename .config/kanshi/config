@@ -1,0 +1,23 @@
+profile "docked" {
+    # DOCKED MODE (4 External Monitors)
+    output "Fujitsu Siemens Computers GmbH B22W-5 YE6P522530" mode 1680x1050 position 0,30
+    output "Lenovo Group Limited C24-25 U76090DC" mode 1920x1080 position 1680,0
+    output "Samsung Electric Company SMBX2235 H9MZ703094" mode 1920x1080 position 1680,1080 transform 180
+    output "Fujitsu Siemens Computers GmbH B22W-6 LED YV3U174780" mode 1680x1050 position 3600,30
+    
+    output "eDP-1" disable
+}
+
+profile "basement" {
+    # DOCKED MODE (2 External Monitors + internal)
+    output "eDP-1" mode 1920x1080 position 0,180 scale 1.2
+    output "Lenovo Group Limited C24-25 U76090DC" mode 1920x1080 position 1600,0
+    output "LG Electronics E2411 212NDTC14729" mode 1920x1080 position 3520,0
+    #output "christmann informationstechnik + medien GmbH & Co. KG HDMI-VGA HDMI-VGA" mode 1920x1080 position 3520,0
+}
+
+
+profile "mobile" {
+    # MOBILE MODE (Just the laptop)
+    output "eDP-1" enable mode 1920x1080 position 0,0 scale 1.2
+}
