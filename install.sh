@@ -198,9 +198,6 @@ link .config/mimeapps.list
 link .config/user-dirs.dirs
 link .config/user-dirs.locale
 
-# Scripts
-link .local/bin/temp_monitor.sh
-
 echo ""
 info "Done!"
 echo "  Backups: $BACKUP_DIR"

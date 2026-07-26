@@ -58,4 +58,3 @@ All waybar scripts are in `.config/waybar/scripts/`:
 - `network.sh` - WiFi/Ethernet status
 - `clock.sh` - Date/time with calendar tooltip
 - `battery.sh` - Battery status with critical/warning alerts
-- `temp_monitor.sh` - CPU temp monitoring with Sway border alerts
