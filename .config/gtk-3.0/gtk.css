@@ -1,0 +1,30 @@
+/* Highlight today's date in calendar popups (waybar clock tooltip) */
+calendar .day.with_marks,
+calendar label.day.with_marks,
+calendar .day:today,
+calendar .day.today,
+calendar day.with_marks {
+  background-color: #88c0d0;
+  color: #2e3440;
+  font-weight: bold;
+  border-radius: 6px;
+}
+
+calendar {
+  background-color: #2e3440;
+  color: #eceff4;
+}
+
+calendar.header {
+  color: #88c0d0;
+  font-weight: bold;
+}
+
+/* Wider, roomier tooltips */
+tooltip {
+  padding: 12px;
+}
+
+tooltip label {
+  min-width: 240px;
+}
