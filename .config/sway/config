@@ -1,15 +1,8 @@
-# --- Start of Wayland/Portal Environment Initialization ---
+# Import environment for portals
 exec export XDG_CURRENT_DESKTOP=sway && \
      systemctl --user import-environment DISPLAY WAYLAND_DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP NO_AT_SPI_ADAPTER MOZ_ENABLE_WAYLAND && \
      dbus-update-activation-environment --systemd DISPLAY WAYLAND_DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP NO_AT_SPI_ADAPTER MOZ_ENABLE_WAYLAND && \
      systemctl --user start sway-session.target
-# --- End of Initialization ---
-
-#output eDP-1 disable
-# Import environment for portals
-exec systemctl --user import-environment DISPLAY WAYLAND_DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP
-exec hash dbus-update-activation-environment 2>/dev/null && \
-     dbus-update-activation-environment --systemd DISPLAY WAYLAND_DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP
 #exec_always --no-startup-id pkill kanshi && kanshi &
 exec_always --no-startup-id kanshi
 
@@ -396,10 +389,6 @@ exec --no-startup-id copyq --start-server
 
 exec nm-applet --indicator
 exec blueman-applet
-
-# AT TOP! Export display/session environment for portals
-#exec systemctl --user import-environment DISPLAY WAYLAND_DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP
-#exec dbus-update-activation-environment --systemd DISPLAY WAYLAND_DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP
 
 # RustDesk Auto-Clicker via Sway Cursor Ghosting
 #for_window [app_id="xdg-desktop-portal"] {
