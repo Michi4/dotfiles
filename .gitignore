@@ -1,0 +1,73 @@
+# === Secrets & Credentials ===
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+.env
+.env.*
+**/secrets/
+**/credentials/
+
+# SSH keys (keep config, skip keys)
+.ssh/id_*
+.ssh/*.pub
+
+# === Sensitive Config Data ===
+# Nextcloud (contains cookies, tokens)
+.config/Nextcloud/cookies*.db
+.config/Nextcloud/*.log
+
+# Signal (contains message database)
+.config/Signal/
+
+# Spotify (contains credentials)
+.config/spotify/Users/
+
+# OpenVPN (contains credentials)
+.openvpn/
+
+# === Cache & Temp ===
+.cache/
+.local/share/Trash/
+*.tmp
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# === Build artifacts ===
+node_modules/
+package-lock.json
+bun.lock
+*.o
+*.ko
+*.pyc
+__pycache__/
+
+# === Large/Binary files ===
+*.iso
+*.img
+*.tar.gz
+*.zip
+*.rar
+*.7z
+*.deb
+*.rpm
+
+# === Screenshots & Media ===
+Screenshots/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.mp4
+*.mkv
+
+# === OS Generated ===
+.viminfo
+.bash_history*
+.xsession-errors*
+.python_history
+.wget-hsts
