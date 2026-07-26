@@ -1,0 +1,146 @@
+{
+  "layer": "top",
+  "position": "top",
+  "modules-left": [
+    "sway/workspaces",
+    "custom/media-0",
+    "custom/media-1",
+    "custom/media-2",
+    "custom/media-3",
+    "custom/media-4",
+    "custom/media-5"
+  ],
+  "modules-center": [],
+  "modules-right": [
+    "tray",
+    "custom/network",
+    "pulseaudio",
+    "cpu",
+    "memory",
+    "battery",
+    "custom/weather",
+    "custom/clock"
+  ],
+  "custom/clock": {
+    "format": "{}",
+    "return-type": "json",
+    "exec": "/home/michi/.config/waybar/scripts/clock.sh",
+    "interval": 1,
+    "cursor": true,
+    "on-click": "xdg-open https://calendar.google.com"
+  },
+  "battery": {
+    "format": "{capacity}% {power:3.1f}W",
+    "format-charging": "{capacity}% +{power:3.1f}W",
+    "format-discharging": "{capacity}% -{power:3.1f}W",
+    "format-full": "Full",
+    "tooltip": true,
+    "cursor": true,
+    "on-click": "foot -e btop"
+  },
+  "cpu": {
+    "format": "CPU {usage}%",
+    "tooltip": true,
+    "on-click": "foot -e btop"
+  },
+  "memory": {
+    "format": "{used:0.1f}G",
+    "tooltip": true,
+    "on-click": "foot -e btop"
+  },
+  "custom/network": {
+    "format": "{}",
+    "return-type": "json",
+    "exec": "~/.config/waybar/scripts/network.sh",
+    "cursor": true,
+    "tooltip": true,
+    "on-click": "foot -e impala"
+  },
+  "pulseaudio": {
+    "format": "{icon} {volume}%",
+    "format-muted": " Muted",
+    "format-icons": {
+      "headphone": "",
+      "hands-free": "",
+      "headset": "",
+      "phone": "",
+      "portable": "",
+      "car": "",
+      "default": [
+        "",
+        "",
+        ""
+      ]
+    },
+    "tooltip-format": "{desc} ({volume}%)",
+    "cursor": true,
+    "on-click": "pavucontrol"
+  },
+  "custom/media-0": {
+    "format": "{}",
+    "return-type": "json",
+    "exec": "~/.config/waybar/scripts/media-slot.sh 0",
+    "on-click": "~/.config/waybar/scripts/media-click.sh 0",
+    "interval": 1,
+    "cursor": true,
+    "tooltip": true
+  },
+  "custom/media-1": {
+    "format": "{}",
+    "return-type": "json",
+    "exec": "~/.config/waybar/scripts/media-slot.sh 1",
+    "on-click": "~/.config/waybar/scripts/media-click.sh 1",
+    "interval": 1,
+    "cursor": true,
+    "tooltip": true
+  },
+  "custom/media-2": {
+    "format": "{}",
+    "return-type": "json",
+    "exec": "~/.config/waybar/scripts/media-slot.sh 2",
+    "on-click": "~/.config/waybar/scripts/media-click.sh 2",
+    "interval": 1,
+    "cursor": true,
+    "tooltip": true
+  },
+  "custom/media-3": {
+    "format": "{}",
+    "return-type": "json",
+    "exec": "~/.config/waybar/scripts/media-slot.sh 3",
+    "on-click": "~/.config/waybar/scripts/media-click.sh 3",
+    "interval": 1,
+    "cursor": true,
+    "tooltip": true
+  },
+  "custom/media-4": {
+    "format": "{}",
+    "return-type": "json",
+    "exec": "~/.config/waybar/scripts/media-slot.sh 4",
+    "on-click": "~/.config/waybar/scripts/media-click.sh 4",
+    "interval": 1,
+    "cursor": true,
+    "tooltip": true
+  },
+  "custom/media-5": {
+    "format": "{}",
+    "return-type": "json",
+    "exec": "~/.config/waybar/scripts/media-slot.sh 5",
+    "on-click": "~/.config/waybar/scripts/media-click.sh 5",
+    "interval": 1,
+    "cursor": true,
+    "tooltip": true
+  },
+  "custom/weather": {
+    "format": "{}",
+    "return-type": "json",
+    "exec": "~/.config/waybar/scripts/weather.sh",
+    "interval": 600,
+    "on-click": "xdg-open https://weather.com",
+    "cursor": true
+  },
+  "tray": {
+    "spacing": 10,
+    "cursor": true,
+    "tooltip": true
+  }
+}

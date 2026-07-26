@@ -1,0 +1,446 @@
+# --- Start of Wayland/Portal Environment Initialization ---
+exec export XDG_CURRENT_DESKTOP=sway && \
+     systemctl --user import-environment DISPLAY WAYLAND_DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP NO_AT_SPI_ADAPTER MOZ_ENABLE_WAYLAND && \
+     dbus-update-activation-environment --systemd DISPLAY WAYLAND_DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP NO_AT_SPI_ADAPTER MOZ_ENABLE_WAYLAND && \
+     systemctl --user start sway-session.target
+# --- End of Initialization ---
+
+#output eDP-1 disable
+# Import environment for portals
+exec systemctl --user import-environment DISPLAY WAYLAND_DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP
+exec hash dbus-update-activation-environment 2>/dev/null && \
+     dbus-update-activation-environment --systemd DISPLAY WAYLAND_DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP
+#exec_always --no-startup-id pkill kanshi && kanshi &
+exec_always --no-startup-id kanshi
+
+exec --no-startup-id gnome-keyring-daemon --start --components=pkcs11,secrets,ssh
+
+exec --no-startup-id nextcloud
+
+# Default config for sway
+#
+# Copy this to ~/.config/sway/config and edit it to your liking.
+#
+# Read `man 5 sway` for a complete reference.
+
+### Variables
+#
+# Logo key. Use Mod1 for Alt.
+set $mod Mod4
+# Home row direction keys, like vim
+set $left h
+set $down j
+set $up k
+set $right l
+# Your preferred terminal emulator
+set $term foot
+# Your preferred application launcher
+set $menu wofi --show drun
+
+set $xdg_desktop_portal_dir /usr/lib/xdg-desktop-portal
+
+### Output configuration
+#
+# Default wallpaper (more resolutions are available in /usr/share/backgrounds/sway/)
+output * bg ~/.config/sway/background.jpg fill
+#
+# Example configuration:
+#
+#   output HDMI-A-1 resolution 1920x1080 position 1920,0
+#
+# You can get the names of your outputs by running: swaymsg -t get_outputs
+#output eDP-1 scale 1.2
+
+# Trigger on lid events
+#bindswitch --locked lid:on  exec ~/.config/sway/scripts/lid-display-handler.sh
+#bindswitch --locked lid:off exec ~/.config/sway/scripts/lid-display-handler.sh
+
+# Trigger on monitor plug/unplug
+#exec_always --no-startup-id \
+#    sh -c 'swaymsg -t subscribe "[\"output\"]" | while read -r _; do ~/.config/sway/scripts/lid-display-handler.sh; done'
+
+### 1. Workspace Pinning (Tell Sway which monitor gets which workspace)
+# Kanshi handles the monitors, but Sway needs this to keep workspaces consistent
+workspace 1 output "Lenovo Group Limited C24-25 U76090DC"
+workspace 2 output "Fujitsu Siemens Computers GmbH B22W-6 LED YV3U174780"
+#workspace 3 output "LG Electronics E2411 212NDTC14729"
+workspace 4 output "Samsung Electric Company SMBX2235 H9MZ703094"
+workspace 3 output "Fujitsu Siemens Computers GmbH B22W-5 YE6P522530"
+
+### 2. Tiling App Assignments
+#assign [app_id="firefox"] workspace 1
+assign [class="Spotify"] workspace 2
+
+### 3. Special Rule: Vesktop (Floating & Positioned)
+for_window [app_id="vesktop"] {
+    move container to workspace 2
+    floating enable
+    #move absolute position 1922 45
+    resize set 1260 1046
+}
+
+
+default_border none
+gaps inner 0
+gaps outer 0
+
+### Idle configuration
+#
+# Example configuration:
+#
+#exec swayidle -w \
+#          timeout 600 'swaylock -f -c 000000' \
+#          timeout 100 'swaymsg "output * power off"' resume 'swaymsg "output * power on"' \
+#	  before-sleep 'swaylock -f -c 000000'
+
+# Toggle keep-awake mode (Mod+Shift+T)
+#bindsym $mod+Shift+t exec bash -c 'STATE_FILE=/tmp/sway_awake_state; if [ -f "$STATE_FILE" ]; then rm "$STATE_FILE"; pkill swayidle; swayidle -w timeout 600 "swaylock -f -c 000000" timeout 100 "swaymsg \"output * power off\"" resume "swaymsg \"output * power on\"" before-sleep "swaylock -f -c 000000" & disown; notify-send "💤 Sleep Enabled" "Device will now auto-sleep again."; else touch "$STATE_FILE"; pkill swayidle; notify-send "☕ Stay Awake Enabled" "Device will stay awake indefinitely."; fi'
+
+bindsym $mod+s exec systemctl suspend
+
+set $sway_idle_cmd swayidle -w \
+    timeout 300 'swaylock -f -c 000000' \
+    timeout 600 'systemctl suspend' \
+    before-sleep 'swaylock -f -c 000000'
+
+bindsym $mod+Shift+t exec bash -c "if pgrep swayidle; then pkill swayidle; notify-send '☕ Stay Awake Enabled'; else swayidle -w timeout 300 'swaylock -f -c 000000' timeout 600 'systemctl suspend' before-sleep 'swaylock -f -c 000000' & notify-send 'Sleep Enabled'; fi"
+exec $sway_idle_cmd
+
+# This will lock your screen after 300 seconds of inactivity, then turn off
+# your displays after another 300 seconds, and turn your screens back on when
+# resumed. It will also lock your screen before your computer goes to sleep.
+
+### Input configuration
+#
+# Example configuration:
+#
+   input type:touchpad {
+       #dwt disabled
+       tap enabled
+       natural_scroll enabled
+       middle_emulation enabled
+       pointer_accel 0.25
+   }
+#
+   input type:keyboard {
+       xkb_layout "de"
+   }
+#
+   input type:pointer {
+   	#left_handed enabled
+   	#tap enabled
+   	#natural_scroll disabled
+   	#dwt enabled
+   	accel_profile "flat"
+    	pointer_accel -0.25 # set mouse sensitivity (between -1 and 1)
+   }
+
+# You can also configure each device individually.
+# Read `man 5 sway-input` for more information about this section.
+
+### Key bindings
+#
+# Basics:
+#
+    # Start a terminal
+    bindsym $mod+t exec $term
+
+    # Moch sofuat amoi an browser auf
+    # na ned der browser an file browser (na no na ned)
+    # i glaub i hob an schodn (betterhelp oda so)
+    bindsym $mod+e exec thunar
+    
+    # steht in .profile
+    #exec export XFCE_DISABLE_USER_SERVICES=1
+
+    # Lockscreen
+    bindsym $mod+l exec swaylock -c 000000
+    bindswitch --locked lid:on exec swaylock -c 000000
+    #bindsym $mod+shift+h exec sudo systemctl hibernate
+    bindsym $mod+shift+h exec swaynag -t warning -m 'Do you really want to hibernate?' -B 'Yes, hibernate' 'sudo systemctl hibernate'
+
+    # Media Controlls
+    bindsym --locked XF86AudioRaiseVolume exec wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+
+    bindsym --locked XF86AudioLowerVolume exec wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-
+    bindsym --locked XF86AudioMute exec wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
+    bindsym --locked XF86AudioMicMute exec wpctl set-mute @DEFAULT_SOURCE@ toggle
+    
+    bindsym $mod+shift+l exec playerctl next
+    bindsym $mod+shift+j exec playerctl previous
+    bindsym $mod+shift+k exec playerctl play-pause
+    bindsym $mod+Shift+p exec playerctl play-pause
+
+    # Vesktop (Discord + Vencord)
+    # Mute command (Right Ctrl + `)
+    # Deafen command (Right Ctrl + ß)
+    #bindsym Control_R+dead_acute exec ~/.vesktopCustomCommands/mute.sh
+    #bindsym Control_R+ssharp exec ~/.vesktopCustomCommands/deafen.sh
+
+
+    # --- SCREENSHOT SUITE ---
+
+    # 1. Capture a region and edit (Arrows, Text, Blur) - The Flameshot Replacement
+    bindsym $mod+Shift+s exec grim -g "$(slurp)" - | satty --filename - --output-filename ~/Screenshots/$(date +%Y%m%d-%H%M%S).png
+
+    # 2. Capture a region and copy directly to clipboard (No editing, super fast)
+    bindsym Print exec grim -g "$(slurp)" - | wl-copy && notify-send "Screenshot" "Region copied to clipboard"
+    # 3. Capture the entire screen and save to file
+    bindsym $mod+Print exec grim ~/Screenshots/$(date +%Y-%m-%d_%H-%m-%s).png && notify-send "Screenshot" "Full screen saved"
+    # Screenshots Flameshot
+    #bindsym $mod+shift+s exec flamseshot gui
+    #bindsym $mod+Shift+s exec bash -c "QT_QPA_PLATFORM=wayland flameshot gui & disown"
+    #bindsym $mod+shift+s exec QT_QPA_PLATFORM=wayland flameshot gui
+    
+    # Screen OCR | Text Extractor
+    bindsym $mod+Shift+e exec grim -g "$(slurp)" - | tesseract -l deu+eng stdin stdout | tr -d '\f' | tr '\n' ' ' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//' | wl-copy && notify-send "OCR Success" "Text cleaned and copied"
+
+    # Copyq clipboard manager
+    bindsym $mod+v exec copyq toggle
+
+    for_window [app_id="copyq"] floating enable
+    for_window [app_id="pavucontrol"] floating enable
+    for_window [app_id="qalculate-gtk"] floating enable
+
+    #bindgesture scroll:3:up   exec volumectl +1%
+    #bindgesture scroll:3:down exec volumectl -1%
+
+    # Kill focused window
+    bindsym $mod+Shift+q kill
+
+    # Start your launcher
+    bindsym $mod+d exec $menu
+    bindsym Mod1+space exec $menu
+
+    # Drag floating windows by holding down $mod and left mouse button.
+    # Resize them with right mouse button + $mod.
+    # Despite the name, also works for non-floating windows.
+    # Change normal to inverse to use left mouse button for resizing and right
+    # mouse button for dragging.
+    floating_modifier $mod normal
+
+    # Reload the configuration file
+    bindsym $mod+Shift+c reload
+
+    # Exit sway (logs you out of your Wayland session)
+    bindsym $mod+Shift+Escape exec swaynag -t warning -m 'You pressed the exit shortcut. Do you really want to exit sway? This will end your Wayland session.' -B 'Yes, exit sway' 'swaymsg exit'
+#
+# Moving around:
+#
+    # Move your focus around
+    #bindsym $mod+Tab exec swayr next-window
+    #bindsym $mod+Shift+Tab exec swayr prev-window
+    #bindsym $mod+$left focus left
+    #bindsym $mod+$down focus down
+    #bindsym $mod+$up focus up
+    #bindsym $mod+$right focus right
+    # Or use $mod+[up|down|left|right]
+    bindsym $mod+Left focus left
+    bindsym $mod+Down focus down
+    bindsym $mod+Up focus up
+    bindsym $mod+Right focus right
+
+    # Move the focused window with the same, but add Shift
+    #bindsym $mod+Shift+$left move left
+    #bindsym $mod+Shift+$down move down
+    #bindsym $mod+Shift+$up move up
+    #bindsym $mod+Shift+$right move right
+    # Ditto, with arrow keys
+    bindsym $mod+Shift+Left move left
+    bindsym $mod+Shift+Down move down
+    bindsym $mod+Shift+Up move up
+    bindsym $mod+Shift+Right move right
+#
+# Workspaces:
+#
+    # Switch to workspace
+    bindsym $mod+1 workspace number 1
+    bindsym $mod+2 workspace number 2
+    bindsym $mod+3 workspace number 3
+    bindsym $mod+4 workspace number 4
+    bindsym $mod+5 workspace number 5
+    bindsym $mod+6 workspace number 6
+    bindsym $mod+7 workspace number 7
+    bindsym $mod+8 workspace number 8
+    bindsym $mod+9 workspace number 9
+    bindsym $mod+0 workspace number 10
+    # Move focused container to workspace
+    bindsym $mod+Shift+1 move container to workspace number 1
+    bindsym $mod+Shift+2 move container to workspace number 2
+    bindsym $mod+Shift+3 move container to workspace number 3
+    bindsym $mod+Shift+4 move container to workspace number 4
+    bindsym $mod+Shift+5 move container to workspace number 5
+    bindsym $mod+Shift+6 move container to workspace number 6
+    bindsym $mod+Shift+7 move container to workspace number 7
+    bindsym $mod+Shift+8 move container to workspace number 8
+    bindsym $mod+Shift+9 move container to workspace number 9
+    bindsym $mod+Shift+0 move container to workspace number 10
+    # Note: workspaces can have any name you want, not just numbers.
+    # We just use 1-10 as the default.
+
+# Switch to workspaces 11-22 using F-keys
+bindsym $mod+F1 workspace number 11
+bindsym $mod+F2 workspace number 12
+bindsym $mod+F3 workspace number 13
+bindsym $mod+F4 workspace number 14
+bindsym $mod+F5 workspace number 15
+bindsym $mod+F6 workspace number 16
+bindsym $mod+F7 workspace number 17
+bindsym $mod+F8 workspace number 18
+bindsym $mod+F9 workspace number 19
+bindsym $mod+F10 workspace number 20
+bindsym $mod+F11 workspace number 21
+bindsym $mod+F12 workspace number 22
+
+# Move focused container to workspaces 11-22 using Shift + F-keys
+bindsym $mod+Shift+F1 move container to workspace number 11
+bindsym $mod+Shift+F2 move container to workspace number 12
+bindsym $mod+Shift+F3 move container to workspace number 13
+bindsym $mod+Shift+F4 move container to workspace number 14
+bindsym $mod+Shift+F5 move container to workspace number 15
+bindsym $mod+Shift+F6 move container to workspace number 16
+bindsym $mod+Shift+F7 move container to workspace number 17
+bindsym $mod+Shift+F8 move container to workspace number 18
+bindsym $mod+Shift+F9 move container to workspace number 19
+bindsym $mod+Shift+F10 move container to workspace number 20
+bindsym $mod+Shift+F11 move container to workspace number 21
+bindsym $mod+Shift+F12 move container to workspace number 22
+
+
+#
+# Layout stuff:
+#
+    # You can "split" the current object of your focus with
+    # $mod+b or $mod+v, for horizontal and vertical splits
+    # respectively.
+    #bindsym $mod+b splith
+    #bindsym $mod+v splitv
+
+    # Switch the current container between different layout styles
+    #bindsym $mod+s layout stacking
+    #bindsym $mod+w layout tabbed
+    #bindsym $mod+e layout toggle split
+    #bindsym $mod+h layout toggle split
+
+    # Make the current focus fullscreen
+    bindsym $mod+f fullscreen
+
+    # Toggle the current focus between tiling and floating mode
+    bindsym $mod+Shift+space floating toggle
+
+    # Swap focus between the tiling area and the floating area
+    bindsym $mod+space focus mode_toggle
+
+    #Move focus to the parent container
+    bindsym $mod+a focus parent
+#
+# Scratchpad:
+#
+    # Sway has a "scratchpad", which is a bag of holding for windows.
+    # You can send windows there and get them back later.
+
+    # Move the currently focused window to the scratchpad
+    bindsym $mod+Shift+minus move scratchpad
+
+    # Show the next scratchpad window or hide the focused scratchpad window.
+    # If there are multiple scratchpad windows, this command cycles through them.
+    bindsym $mod+minus scratchpad show
+#
+# Resizing containers:
+#
+mode "resize" {
+    # left will shrink the containers width
+    # right will grow the containers width
+    # up will shrink the containers height
+    # down will grow the containers height
+    bindsym $left resize shrink width 10px
+    bindsym $down resize grow height 10px
+    bindsym $up resize shrink height 10px
+    bindsym $right resize grow width 10px
+
+
+    # Ditto, with arrow keys
+    bindsym Left resize shrink width 10px
+    bindsym Down resize grow height 10px
+    bindsym Up resize shrink height 10px
+    bindsym Right resize grow width 10px
+
+    # Return to default mode
+    bindsym Return mode "default"
+    bindsym Escape mode "default"
+}
+bindsym $mod+r mode "resize"
+#
+# Utilities:
+#
+    # Special keys to adjust volume via PulseAudio
+    #bindsym --locked XF86AudioMute exec pactl set-sink-mute \@DEFAULT_SINK@ toggle
+    #bindsym --locked XF86AudioLowerVolume exec pactl set-sink-volume \@DEFAULT_SINK@ -5%
+    #bindsym --locked XF86AudioRaiseVolume exec pactl set-sink-volume \@DEFAULT_SINK@ +5%
+    #bindsym --locked XF86AudioMicMute exec pactl set-source-mute \@DEFAULT_SOURCE@ toggle
+    
+    # Special keys to adjust brightness via brightnessctl
+    bindsym --locked XF86MonBrightnessDown exec brightnessctl set 5%-
+    bindsym --locked XF86MonBrightnessUp exec brightnessctl set 5%+
+
+#
+# Bar / Status Bar:
+bar {
+    swaybar_command waybar
+    position top
+}
+
+exec mako
+exec libinput-gestures-setup start
+#exec swayrd
+exec --no-startup-id copyq --start-server
+
+exec nm-applet --indicator
+exec blueman-applet
+
+# AT TOP! Export display/session environment for portals
+#exec systemctl --user import-environment DISPLAY WAYLAND_DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP
+#exec dbus-update-activation-environment --systemd DISPLAY WAYLAND_DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP
+
+# RustDesk Auto-Clicker via Sway Cursor Ghosting
+#for_window [app_id="xdg-desktop-portal"] {
+#    focus
+#    floating enable
+#    resize set 800 600
+#    move position 0 0
+#    exec bash -c 'sleep 0.6 && swaymsg seat - cursor set 400 300 && swaymsg seat - cursor press button1 && swaymsg seat - cursor release button1 && sleep 0.2 && swaymsg seat - cursor set 750 30 && swaymsg seat - cursor press button1 && swaymsg seat - cursor release button1'
+#}
+
+# Environment variables for dark mode
+#exec setenv GTK_THEME Adwaita:dark
+#exec setenv QT_STYLE_OVERRIDE kvantum
+exec gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'
+exec gsettings set org.gnome.desktop.interface gtk-theme 'Adwaita-dark'
+
+# Autostarts: (not all here :c)
+#exec_always --no-startup-id pkill kanshi && kanshi &
+#exec rustdesk --tray
+
+for_window [app_id="firefox"] inhibit_idle visible
+for_window [app_id="thunderbird"] inhibit_idle visible
+assign [app_id="thunderbird"] workspace number 4
+exec MOZ_ENABLE_WAYLAND=1 thunderbird
+
+#assign [app_id="firefox"] workspace number 1
+for_window [app_id="firefox" title="(?i).*koerbler.*zulip.*"] move container to workspace 1
+exec MOZ_ENABLE_WAYLAND=1 firefox https://collaboration.koerbler.com/#inbox
+exec MOZ_ENABLE_WAYLAND=1 firefox https://vikunja.bwh.at/
+
+
+# Oder das cleaner prob (WENNS GEHT) aber ich lass mal so weil grad kein zeit:
+#assign [app_id="koerbler-zulip"] workspace number 1
+#exec firefox --name koerbler-zulip --new-window https://collaboration.koerbler.com/#inbox
+
+
+# Battery warnings
+exec batsignal -w 15 -c 5 -d 2
+# temp warnings
+exec /home/michi/.local/bin/temp_monitor.sh
+
+
+include /etc/sway/config.d/
+

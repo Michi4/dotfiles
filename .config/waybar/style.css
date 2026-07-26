@@ -1,0 +1,311 @@
+/*------------------------------------*/
+/* General styling                     */
+/*------------------------------------*/
+* {
+  font-family: "JetBrainsMono Nerd Font", "Font Awesome 6 Free", sans-serif;
+  font-size: 15px;
+  min-height: 0;
+  color: #ffffff;
+}
+
+window#waybar {
+  background-color: #222222;
+  border-bottom: 0px solid #81a1c1;
+  padding: 0;
+  min-height: 0;
+}
+
+/*------------------------------------*/
+/* Modules padding                     */
+/*------------------------------------*/
+#clock, #custom-datetime, #battery, #cpu, #memory,
+#tray, #custom-media, #custom-media-0, #custom-media-1, #custom-media-2, #custom-media-3,
+#custom-media-4, #custom-media-5,
+#custom-network, #pulseaudio, #custom-weather, 
+#custom-notifications, #custom-usb {
+  padding: 0 10px;
+  margin-top: 0;
+  margin-bottom: 0;
+  border-radius: 0;
+  transition: all 0.2s ease;
+}
+
+#clock, #custom-datetime {
+  color: #eceff4;
+  font-weight: bold;
+}
+
+#clock:hover, #custom-datetime:hover {
+  background-color: #5e81ac;
+}
+
+#custom-media, #custom-media-0, #custom-media-1, #custom-media-2, #custom-media-3,
+#custom-media-4, #custom-media-5 {
+  padding-left: 0;
+  color: #81a1c1;
+}
+
+#custom-media.playing, #custom-media-0.playing, #custom-media-1.playing,
+#custom-media-2.playing, #custom-media-3.playing, #custom-media-4.playing, #custom-media-5.playing {
+  font-weight: bold;
+}
+
+#custom-media.paused, #custom-media-0.paused, #custom-media-1.paused,
+#custom-media-2.paused, #custom-media-3.paused, #custom-media-4.paused, #custom-media-5.paused {
+  font-style: italic;
+  color: #4c566a;
+}
+
+#custom-media:hover, #custom-media-0:hover, #custom-media-1:hover,
+#custom-media-2:hover, #custom-media-3:hover, #custom-media-4:hover, #custom-media-5:hover {
+  background-color: #5e81ac;
+}
+
+#custom-media.stopped, #custom-media-0.stopped, #custom-media-1.stopped,
+#custom-media-2.stopped, #custom-media-3.stopped, #custom-media-4.stopped, #custom-media-5.stopped {
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  min-height: 0;
+  font-size: 0;
+}
+
+#workspaces {
+  padding: 0 10px 0 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  border-radius: 0;
+  transition: all 0.2s ease;
+}
+
+
+button {
+  min-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+/*------------------------------------*/
+/* Workspaces                          */
+/*------------------------------------*/
+#workspaces button {
+  padding: 0 8px;
+  background-color: transparent;
+  color: #eceff4;
+  border: none;
+  border-radius: 0;
+}
+
+#workspaces button.focused,
+#workspaces button.active {
+  background-color: #81a1c1;
+  color: #2e3440;
+  font-weight: bold;
+}
+
+#workspaces button:hover {
+  background-color: #5e81ac;
+  color: #eceff4;
+}
+
+/*------------------------------------*/
+/* Battery module                      */
+/*------------------------------------*/
+#battery {
+  color: #a3be8c;
+}
+
+#battery.charging {
+  color: #a3be8c;
+  font-weight: bold;
+}
+
+#battery.warning:not(.charging) {
+  color: #ebcb8b;
+}
+
+#battery.critical:not(.charging) {
+  color: #bf616a;
+  font-weight: bold;
+  animation: blink 1s ease-in-out infinite;
+}
+
+#battery.full {
+  color: #81a1c1;
+}
+
+/*------------------------------------*/
+/* CPU & Memory                        */
+/*------------------------------------*/
+#cpu { 
+  color: #88c0d0; 
+}
+
+#cpu.warning {
+  color: #ebcb8b;
+}
+
+#cpu.critical {
+  color: #bf616a;
+  font-weight: bold;
+}
+
+#memory { 
+  color: #d08770; 
+}
+
+#memory.warning {
+  color: #ebcb8b;
+}
+
+#memory.critical {
+  color: #bf616a;
+  font-weight: bold;
+}
+
+/*------------------------------------*/
+/* Network                              */
+/*------------------------------------*/
+#custom-network {
+  color: #a3be8c;
+}
+
+#custom-network.disconnected {
+  color: #bf616a;
+}
+
+#custom-network.ethernet {
+  color: #88c0d0;
+}
+
+/*------------------------------------*/
+/* PulseAudio/Volume                    */
+/*------------------------------------*/
+#pulseaudio { 
+  color: #ebcb8b; 
+}
+
+#pulseaudio.muted {
+  color: #bf616a;
+  text-decoration: line-through;
+}
+
+/*------------------------------------*/
+/* Clock & Datetime                        */
+/*------------------------------------*/
+/* (styled via merged rule at top)      */
+
+/*------------------------------------*/
+/* Tray                                 */
+/*------------------------------------*/
+#tray {
+  padding: 0 10px;
+}
+
+#tray > .passive {
+  -gtk-icon-effect: dim;
+}
+
+#tray > .needs-attention {
+  -gtk-icon-effect: highlight;
+  background-color: #bf616a;
+}
+
+/*------------------------------------*/
+/* Custom modules styling              */
+/*------------------------------------*/
+
+/* Weather */
+#custom-weather {
+  color: #88c0d0;
+}
+
+#custom-weather:hover {
+  background-color: #5e81ac;
+}
+
+/* Media */
+#custom-media {
+  color: #81a1c1;
+}
+
+#custom-media.playing {
+  font-weight: bold;
+}
+
+#custom-media.paused {
+  font-style: italic;
+  color: #4c566a;
+}
+
+#custom-media:hover {
+  background-color: #5e81ac;
+}
+
+/* Notifications */
+#custom-notifications {
+  color: #eceff4;
+}
+
+#custom-notifications.active {
+  color: #ebcb8b;
+}
+
+#custom-notifications.none {
+  color: #eceff4;
+}
+
+#custom-notifications:hover {
+  background-color: #5e81ac;
+}
+
+/* USB */
+#custom-usb {
+  color: #d08770;
+}
+
+#custom-usb:hover {
+  background-color: #5e81ac;
+}
+
+/*------------------------------------*/
+/* Tooltips                             */
+/*------------------------------------*/
+tooltip {
+  background-color: rgba(40, 44, 52, 0.95);
+  border: 2px solid #81a1c1;
+  border-radius: 5px;
+  padding: 8px;
+}
+
+tooltip label {
+  color: #eceff4;
+}
+
+/*------------------------------------*/
+/* Tray                                 */
+/*------------------------------------*/
+#tray {
+  background-color: #453241; /* A slightly lighter grey than the bar */
+  border-radius: 15px;       /* Nice rounded pill shape */
+  margin: 0px 2.5px;         /* Remove vertical margin to save space */
+  padding: 0 15px;           /* Padding inside the pill */
+}
+
+#tray > .passive {
+  -gtk-icon-effect: dim;
+}
+
+#tray > .needs-attention {
+  -gtk-icon-effect: highlight;
+  background-color: #bf616a;
+  border-radius: 15px;
+}
+
+/* Fix for the context menu (Right click) background */
+#tray menu {
+  background-color: #2e3440;
+  color: #ffffff;
+}
