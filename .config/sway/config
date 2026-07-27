@@ -4,7 +4,7 @@ exec export XDG_CURRENT_DESKTOP=sway && \
      dbus-update-activation-environment --systemd DISPLAY WAYLAND_DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP NO_AT_SPI_ADAPTER MOZ_ENABLE_WAYLAND && \
      systemctl --user start sway-session.target
 #exec_always --no-startup-id pkill kanshi && kanshi &
-exec_always --no-startup-id kanshi
+exec --no-startup-id kanshi
 
 exec --no-startup-id gnome-keyring-daemon --start --components=pkcs11,secrets,ssh
 
@@ -415,14 +415,8 @@ assign [app_id="thunderbird"] workspace number 4
 exec MOZ_ENABLE_WAYLAND=1 thunderbird
 
 #assign [app_id="firefox"] workspace number 1
-for_window [app_id="firefox" title="(?i).*koerbler.*zulip.*"] move container to workspace 1
 exec MOZ_ENABLE_WAYLAND=1 firefox https://collaboration.koerbler.com/#inbox
 exec MOZ_ENABLE_WAYLAND=1 firefox https://vikunja.bwh.at/
-
-
-# Oder das cleaner prob (WENNS GEHT) aber ich lass mal so weil grad kein zeit:
-#assign [app_id="koerbler-zulip"] workspace number 1
-#exec firefox --name koerbler-zulip --new-window https://collaboration.koerbler.com/#inbox
 
 
 # Battery warnings
