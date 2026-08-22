@@ -1,8 +1,16 @@
-# Import environment for portals
+# --- Start of Wayland/Portal Environment Initialization ---
 exec export XDG_CURRENT_DESKTOP=sway && \
      systemctl --user import-environment DISPLAY WAYLAND_DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP NO_AT_SPI_ADAPTER MOZ_ENABLE_WAYLAND && \
      dbus-update-activation-environment --systemd DISPLAY WAYLAND_DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP NO_AT_SPI_ADAPTER MOZ_ENABLE_WAYLAND && \
      systemctl --user start sway-session.target
+# --- End of Initialization ---
+
+output eDP-1 max_render_time 3
+#output eDP-1 disable
+# Import environment for portals
+exec systemctl --user import-environment DISPLAY WAYLAND_DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP
+exec hash dbus-update-activation-environment 2>/dev/null && \
+     dbus-update-activation-environment --systemd DISPLAY WAYLAND_DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP
 #exec_always --no-startup-id pkill kanshi && kanshi &
 exec --no-startup-id kanshi
 
@@ -36,6 +44,9 @@ set $xdg_desktop_portal_dir /usr/lib/xdg-desktop-portal
 #
 # Default wallpaper (more resolutions are available in /usr/share/backgrounds/sway/)
 output * bg ~/.config/sway/background.jpg fill
+# Apply display layout (resolution/scale/position) managed by nwg-displays.
+# Included so settings survive `sway reload` (otherwise the laptop resets to scale 1.0).
+include /home/michi/.config/sway/outputs
 #
 # Example configuration:
 #
@@ -91,13 +102,15 @@ gaps outer 0
 
 bindsym $mod+s exec systemctl suspend
 
-set $sway_idle_cmd swayidle -w \
-    timeout 300 'swaylock -f -c 000000' \
-    timeout 600 'systemctl suspend' \
-    before-sleep 'swaylock -f -c 000000'
-
-bindsym $mod+Shift+t exec bash -c "if pgrep swayidle; then pkill swayidle; notify-send '☕ Stay Awake Enabled'; else swayidle -w timeout 300 'swaylock -f -c 000000' timeout 600 'systemctl suspend' before-sleep 'swaylock -f -c 000000' & notify-send 'Sleep Enabled'; fi"
-exec $sway_idle_cmd
+# Adaptive idle: 1min on battery / 5min on AC - managed by idle-manager.sh
+# Mod+Shift+T still toggles stay-awake
+exec_always --no-startup-id ~/.config/sway/scripts/idle-manager.sh
+exec --no-startup-id wluma
+bindsym $mod+Shift+t exec bash -c 'STATE_FILE=/tmp/sway_awake_state; CACHE=/tmp/sway_idle_last_ac; if [ -f "$STATE_FILE" ]; then rm "$STATE_FILE"; rm -f "$CACHE"; notify-send "💤 Sleep Enabled" "Resuming auto-sleep (1min battery / 5min AC)"; else touch "$STATE_FILE"; pkill swayidle; notify-send "☕ Stay Awake Enabled" "Device will stay awake indefinitely."; fi'
+# Gamma: sunset-auto (2500K Vienna manual) is now the default. Seed state at login so first Mod+Shift+N goes to Max.
+exec --no-startup-id bash -c 'echo sunset > /tmp/gammastep_state; systemctl --user restart gammastep 2>/dev/null || (pkill -x gammastep 2>/dev/null; gammastep -m wayland & disown)'
+bindsym $mod+Shift+n exec ~/.config/sway/scripts/gammastep-3way.sh # 3-way night mode: sunset (auto 2500K) -> max (1000K) -> off -> sunset ... [default: sunset]
+bindsym $mod+Shift+b exec pkill wluma; WLR_DRM_NO_MODIFIERS=1 wluma &  # auto-brightness restart
 
 # This will lock your screen after 300 seconds of inactivity, then turn off
 # your displays after another 300 seconds, and turn your screens back on when
@@ -372,8 +385,10 @@ bindsym $mod+r mode "resize"
     #bindsym --locked XF86AudioMicMute exec pactl set-source-mute \@DEFAULT_SOURCE@ toggle
     
     # Special keys to adjust brightness via brightnessctl
-    bindsym --locked XF86MonBrightnessDown exec brightnessctl set 5%-
-    bindsym --locked XF86MonBrightnessUp exec brightnessctl set 5%+
+    bindsym --locked XF86MonBrightnessDown exec brightnessctl set 1%-
+    bindsym --locked XF86MonBrightnessUp exec brightnessctl set 1%+
+    bindsym --locked Shift+XF86MonBrightnessDown exec brightnessctl set 5%-
+    bindsym --locked Shift+XF86MonBrightnessUp exec brightnessctl set 5%+
 
 #
 # Bar / Status Bar:
@@ -389,6 +404,10 @@ exec --no-startup-id copyq --start-server
 
 exec nm-applet --indicator
 exec blueman-applet
+
+# AT TOP! Export display/session environment for portals
+#exec systemctl --user import-environment DISPLAY WAYLAND_DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP
+#exec dbus-update-activation-environment --systemd DISPLAY WAYLAND_DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP
 
 # RustDesk Auto-Clicker via Sway Cursor Ghosting
 #for_window [app_id="xdg-desktop-portal"] {
@@ -413,15 +432,27 @@ for_window [app_id="firefox"] inhibit_idle visible
 for_window [app_id="thunderbird"] inhibit_idle visible
 assign [app_id="thunderbird"] workspace number 4
 exec MOZ_ENABLE_WAYLAND=1 thunderbird
+# Zoiper autostart disabled per user request (2026-08-22) - was: exec zoiper
 
-#assign [app_id="firefox"] workspace number 1
-exec MOZ_ENABLE_WAYLAND=1 firefox https://collaboration.koerbler.com/#inbox
-exec MOZ_ENABLE_WAYLAND=1 firefox https://vikunja.bwh.at/
+# --- Firefox: Main collaboration window (visible, workspace 1) ---
+# Zulip (collaboration.koerbler.com) + Vikunja + Support + AI Studio -> single Firefox window, always visible
+exec --no-startup-id ~/.config/sway/scripts/launch-main-firefox.sh
+
+# --- Firefox: Stash window (scratchpad / stash, toggle with $mod+minus, stash with $mod+Shift+minus) ---
+# WhatsApp + Kimai + ManagedWP (InfiniteWP) + HedgeDoc (md.home.websters.at) -> separate Firefox window, auto-minimized to scratchpad ONCE at startup only
+# NOTE: No for_window move scratchpad here - that would trap every future WhatsApp/Kimai window. Only launch-stash-firefox.sh moves it once at boot.
+exec --no-startup-id ~/.config/sway/scripts/launch-stash-firefox.sh
+
 
 
 # Battery warnings
 exec batsignal -w 15 -c 5 -d 2
+# temp warnings
 
 
 include /etc/sway/config.d/
 
+
+# Battery: limit brightness to 50% to save ~2W
+# exec --no-startup-id brightnessctl set 50%
+exec --no-startup-id ~/.config/sway/scripts/audio-cpu-boost.sh

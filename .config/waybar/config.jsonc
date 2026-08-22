@@ -25,7 +25,7 @@
     "format": "{}",
     "return-type": "json",
     "exec": "/home/michi/.config/waybar/scripts/clock.sh",
-    "interval": 1,
+    "interval": 60,
     "cursor": true,
     "on-click": "xdg-open https://calendar.google.com"
   },
@@ -36,17 +36,20 @@
     "format-full": "Full",
     "tooltip": true,
     "cursor": true,
-    "on-click": "foot -e btop"
+    "on-click": "foot -e btop",
+    "interval": 5
   },
   "cpu": {
     "format": "CPU {usage}%",
     "tooltip": true,
-    "on-click": "foot -e btop"
+    "on-click": "foot -e btop",
+    "interval": 5
   },
   "memory": {
     "format": "{used:0.1f}G",
     "tooltip": true,
-    "on-click": "foot -e btop"
+    "on-click": "foot -e btop",
+    "interval": 10
   },
   "custom/network": {
     "format": "{}",
@@ -58,18 +61,18 @@
   },
   "pulseaudio": {
     "format": "{icon} {volume}%",
-    "format-muted": " Muted",
+    "format-muted": "\uf026 Muted",
     "format-icons": {
-      "headphone": "",
-      "hands-free": "",
-      "headset": "",
-      "phone": "",
-      "portable": "",
-      "car": "",
+      "headphone": "\uf025",
+      "hands-free": "\uf590",
+      "headset": "\uf590",
+      "phone": "\uf095",
+      "portable": "\uf095",
+      "car": "\uf1b9",
       "default": [
-        "",
-        "",
-        ""
+        "\uf026",
+        "\uf027",
+        "\uf028"
       ]
     },
     "tooltip-format": "{desc} ({volume}%)",
@@ -81,7 +84,7 @@
     "return-type": "json",
     "exec": "~/.config/waybar/scripts/media-slot.sh 0",
     "on-click": "~/.config/waybar/scripts/media-click.sh 0",
-    "interval": 1,
+    "interval": 5,
     "cursor": true,
     "tooltip": true
   },
@@ -90,7 +93,7 @@
     "return-type": "json",
     "exec": "~/.config/waybar/scripts/media-slot.sh 1",
     "on-click": "~/.config/waybar/scripts/media-click.sh 1",
-    "interval": 1,
+    "interval": 5,
     "cursor": true,
     "tooltip": true
   },
@@ -99,7 +102,7 @@
     "return-type": "json",
     "exec": "~/.config/waybar/scripts/media-slot.sh 2",
     "on-click": "~/.config/waybar/scripts/media-click.sh 2",
-    "interval": 1,
+    "interval": 5,
     "cursor": true,
     "tooltip": true
   },
@@ -108,7 +111,7 @@
     "return-type": "json",
     "exec": "~/.config/waybar/scripts/media-slot.sh 3",
     "on-click": "~/.config/waybar/scripts/media-click.sh 3",
-    "interval": 1,
+    "interval": 5,
     "cursor": true,
     "tooltip": true
   },
@@ -117,7 +120,7 @@
     "return-type": "json",
     "exec": "~/.config/waybar/scripts/media-slot.sh 4",
     "on-click": "~/.config/waybar/scripts/media-click.sh 4",
-    "interval": 1,
+    "interval": 5,
     "cursor": true,
     "tooltip": true
   },
@@ -126,7 +129,7 @@
     "return-type": "json",
     "exec": "~/.config/waybar/scripts/media-slot.sh 5",
     "on-click": "~/.config/waybar/scripts/media-click.sh 5",
-    "interval": 1,
+    "interval": 5,
     "cursor": true,
     "tooltip": true
   },
