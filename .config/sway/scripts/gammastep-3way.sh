@@ -6,7 +6,7 @@ if [ "$S" = off ]; then
   pkill -x gammastep 2>/dev/null
   systemctl --user restart gammastep 2>/dev/null
   echo sunset > "$FILE"
-  notify-send "🌗 Sunset — Auto" "Warm 2500K, follows sunrise/sunset (Vienna), fades smoothly" 2>/dev/null
+  notify-send "Sunset — Auto" "Warm 2500K, follows sunrise/sunset (Vienna), fades smoothly" 2>/dev/null
 elif [ "$S" = sunset ]; then
   pkill -x gammastep 2>/dev/null
   systemctl --user stop gammastep 2>/dev/null
@@ -14,11 +14,11 @@ elif [ "$S" = sunset ]; then
   gammastep -m wayland -O 1000 2>/dev/null &
   disown
   echo on > "$FILE"
-  notify-send "🌙 Max — Night" "Forced 1000K extreme red, maximum blue-light block" 2>/dev/null
+  notify-send "Max — Night" "Forced 1000K extreme red, maximum blue-light block" 2>/dev/null
 else
   pkill -x gammastep 2>/dev/null
   systemctl --user stop gammastep 2>/dev/null
   sleep 0.2
   echo off > "$FILE"
-  notify-send "☀️ Daylight — Off" "Native unfiltered 6500K, no adjustment" 2>/dev/null
+  notify-send "Daylight — Off" "Native unfiltered 6500K, no adjustment" 2>/dev/null
 fi

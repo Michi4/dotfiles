@@ -19,7 +19,7 @@ start_swayidle() {
   pkill swayidle 2>/dev/null
   sleep 0.3
   if [ -f "$STATE_FILE" ]; then
-    notify-send "☕ Stay Awake Enabled" "Device will stay awake indefinitely." 2>/dev/null
+    notify-send "Stay Awake Enabled" "Device will stay awake indefinitely." 2>/dev/null
     return
   fi
   AC=$(get_ac_status)

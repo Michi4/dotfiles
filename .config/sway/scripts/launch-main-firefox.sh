@@ -10,7 +10,7 @@ MAIN_URLS=(
   "https://collaboration.koerbler.com/#inbox"
   "https://vikunja.bwh.at/"
   "https://support.brunner.at/"
-  "https://aistudio.google.com/"
+  "https://aistudio.google.com/library"
 )
 
 # Check if we already have a main window (check via sessionstore or sway tree for Zulip/Vikunja)

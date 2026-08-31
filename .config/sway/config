@@ -98,19 +98,20 @@ gaps outer 0
 #	  before-sleep 'swaylock -f -c 000000'
 
 # Toggle keep-awake mode (Mod+Shift+T)
-#bindsym $mod+Shift+t exec bash -c 'STATE_FILE=/tmp/sway_awake_state; if [ -f "$STATE_FILE" ]; then rm "$STATE_FILE"; pkill swayidle; swayidle -w timeout 600 "swaylock -f -c 000000" timeout 100 "swaymsg \"output * power off\"" resume "swaymsg \"output * power on\"" before-sleep "swaylock -f -c 000000" & disown; notify-send "💤 Sleep Enabled" "Device will now auto-sleep again."; else touch "$STATE_FILE"; pkill swayidle; notify-send "☕ Stay Awake Enabled" "Device will stay awake indefinitely."; fi'
+#bindsym $mod+Shift+t exec bash -c 'STATE_FILE=/tmp/sway_awake_state; if [ -f "$STATE_FILE" ]; then rm "$STATE_FILE"; pkill swayidle; swayidle -w timeout 600 "swaylock -f -c 000000" timeout 100 "swaymsg \"output * power off\"" resume "swaymsg \"output * power on\"" before-sleep "swaylock -f -c 000000" & disown; notify-send "Sleep Enabled" "Device will now auto-sleep again."; else touch "$STATE_FILE"; pkill swayidle; notify-send "Stay Awake Enabled" "Device will stay awake indefinitely."; fi'
 
 bindsym $mod+s exec systemctl suspend
+bindsym $mod+p exec nwg-displays
 
 # Adaptive idle: 1min on battery / 5min on AC - managed by idle-manager.sh
 # Mod+Shift+T still toggles stay-awake
 exec_always --no-startup-id ~/.config/sway/scripts/idle-manager.sh
-exec --no-startup-id wluma
-bindsym $mod+Shift+t exec bash -c 'STATE_FILE=/tmp/sway_awake_state; CACHE=/tmp/sway_idle_last_ac; if [ -f "$STATE_FILE" ]; then rm "$STATE_FILE"; rm -f "$CACHE"; notify-send "💤 Sleep Enabled" "Resuming auto-sleep (1min battery / 5min AC)"; else touch "$STATE_FILE"; pkill swayidle; notify-send "☕ Stay Awake Enabled" "Device will stay awake indefinitely."; fi'
+exec --no-startup-id ~/.config/sway/scripts/auto-brightness.sh
+bindsym $mod+Shift+t exec bash -c 'STATE_FILE=/tmp/sway_awake_state; CACHE=/tmp/sway_idle_last_ac; if [ -f "$STATE_FILE" ]; then rm "$STATE_FILE"; rm -f "$CACHE"; notify-send "Sleep Enabled" "Resuming auto-sleep (1min battery / 5min AC)"; else touch "$STATE_FILE"; pkill swayidle; notify-send "Stay Awake Enabled" "Device will stay awake indefinitely."; fi'
 # Gamma: sunset-auto (2500K Vienna manual) is now the default. Seed state at login so first Mod+Shift+N goes to Max.
 exec --no-startup-id bash -c 'echo sunset > /tmp/gammastep_state; systemctl --user restart gammastep 2>/dev/null || (pkill -x gammastep 2>/dev/null; gammastep -m wayland & disown)'
 bindsym $mod+Shift+n exec ~/.config/sway/scripts/gammastep-3way.sh # 3-way night mode: sunset (auto 2500K) -> max (1000K) -> off -> sunset ... [default: sunset]
-bindsym $mod+Shift+b exec pkill wluma; WLR_DRM_NO_MODIFIERS=1 wluma &  # auto-brightness restart
+bindsym $mod+Shift+b exec ~/.config/sway/scripts/auto-brightness.sh toggle  # auto-brightness on/off toggle
 
 # This will lock your screen after 300 seconds of inactivity, then turn off
 # your displays after another 300 seconds, and turn your screens back on when
@@ -166,15 +167,15 @@ bindsym $mod+Shift+b exec pkill wluma; WLR_DRM_NO_MODIFIERS=1 wluma &  # auto-br
     bindsym $mod+shift+h exec swaynag -t warning -m 'Do you really want to hibernate?' -B 'Yes, hibernate' 'sudo systemctl hibernate'
 
     # Media Controlls
-    bindsym --locked XF86AudioRaiseVolume exec wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+
-    bindsym --locked XF86AudioLowerVolume exec wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-
+    bindsym --locked XF86AudioRaiseVolume exec bash -c 'LAST=/tmp/volume_last; NOW=$(date +%s%3N); LAST_T=$(cat $LAST 2>/dev/null || echo 0); DIFF=$((NOW-LAST_T)); if [ $DIFF -lt 500 ]; then S=0.05; else S=0.1; fi; echo $NOW > $LAST; wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 1%+; for i in 2 3 4 5; do sleep $S; wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 1%+; done'
+    bindsym --locked XF86AudioLowerVolume exec bash -c 'LAST=/tmp/volume_last; NOW=$(date +%s%3N); LAST_T=$(cat $LAST 2>/dev/null || echo 0); DIFF=$((NOW-LAST_T)); if [ $DIFF -lt 500 ]; then S=0.05; else S=0.1; fi; echo $NOW > $LAST; wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 1%-; for i in 2 3 4 5; do sleep $S; wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 1%-; done'
     bindsym --locked XF86AudioMute exec wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
     bindsym --locked XF86AudioMicMute exec wpctl set-mute @DEFAULT_SOURCE@ toggle
     
-    bindsym $mod+shift+l exec playerctl next
-    bindsym $mod+shift+j exec playerctl previous
-    bindsym $mod+shift+k exec playerctl play-pause
-    bindsym $mod+Shift+p exec playerctl play-pause
+    bindsym $mod+shift+l exec bash -c 'sleep 0.1; playerctl next'
+    bindsym $mod+shift+j exec bash -c 'sleep 0.1; playerctl previous'
+    bindsym $mod+shift+k exec bash -c 'sleep 0.1; playerctl play-pause'
+    bindsym $mod+Shift+p exec bash -c 'sleep 0.1; playerctl play-pause'
 
     # Vesktop (Discord + Vencord)
     # Mute command (Right Ctrl + `)
@@ -206,6 +207,7 @@ bindsym $mod+Shift+b exec pkill wluma; WLR_DRM_NO_MODIFIERS=1 wluma &  # auto-br
     for_window [app_id="copyq"] floating enable
     for_window [app_id="pavucontrol"] floating enable
     for_window [app_id="qalculate-gtk"] floating enable
+    for_window [app_id="nwg-displays"] floating enable
 
     #bindgesture scroll:3:up   exec volumectl +1%
     #bindgesture scroll:3:down exec volumectl -1%
@@ -385,10 +387,10 @@ bindsym $mod+r mode "resize"
     #bindsym --locked XF86AudioMicMute exec pactl set-source-mute \@DEFAULT_SOURCE@ toggle
     
     # Special keys to adjust brightness via brightnessctl
-    bindsym --locked XF86MonBrightnessDown exec brightnessctl set 1%-
-    bindsym --locked XF86MonBrightnessUp exec brightnessctl set 1%+
-    bindsym --locked Shift+XF86MonBrightnessDown exec brightnessctl set 5%-
-    bindsym --locked Shift+XF86MonBrightnessUp exec brightnessctl set 5%+
+    bindsym --locked XF86MonBrightnessDown exec brightnessctl set 5%-
+    bindsym --locked XF86MonBrightnessUp exec brightnessctl set 5%+
+    bindsym --locked Shift+XF86MonBrightnessDown exec brightnessctl set 1%-
+    bindsym --locked Shift+XF86MonBrightnessUp exec brightnessctl set 1%+
 
 #
 # Bar / Status Bar:

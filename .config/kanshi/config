@@ -1,23 +1,38 @@
-profile "docked" {
-    # DOCKED MODE (4 External Monitors)
+profile "desktop" {
+    # 4 External Monitors (Desktop PC)
     output "Fujitsu Siemens Computers GmbH B22W-5 YE6P522530" mode 1680x1050 position 0,30
-    output "Lenovo Group Limited C24-25 U76090DC" mode 1920x1080 position 1680,0
-    output "Samsung Electric Company SMBX2235 H9MZ703094" mode 1920x1080 position 1680,1080 transform 180
+    output "Lenovo Group Limited C24-25 U76090DC" position 1680,0
     output "Fujitsu Siemens Computers GmbH B22W-6 LED YV3U174780" mode 1680x1050 position 3600,30
-    
+    output "Samsung Electric Company SMBX2235 H9MZ703094" mode 1920x1080@60Hz position 1680,1080 transform 180
+}
+
+profile "docked_laptop" {
+    # 4 External Monitors + Laptop Display
+    output "Fujitsu Siemens Computers GmbH B22W-5 YE6P522530" mode 1680x1050 position 0,30
+    output "Lenovo Group Limited C24-25 U76090DC" position 1680,0
+    output "Fujitsu Siemens Computers GmbH B22W-6 LED YV3U174780" mode 1680x1050 position 3600,30
+    output "Samsung Electric Company SMBX2235 H9MZ703094" mode 1920x1080@60Hz position 1680,1080 transform 180
     output "eDP-1" disable
 }
 
-profile "basement" {
-    # DOCKED MODE (2 External Monitors + internal)
-    output "eDP-1" mode 1920x1080 position 0,180 scale 1.2
-    output "Lenovo Group Limited C24-25 U76090DC" mode 1920x1080 position 1600,0
-    output "LG Electronics E2411 212NDTC14729" mode 1920x1080 position 3520,0
-    #output "christmann informationstechnik + medien GmbH & Co. KG HDMI-VGA HDMI-VGA" mode 1920x1080 position 3520,0
+profile "desktop_3mon" {
+    # 3 External Monitors (Desktop PC, Samsung not connected)
+    output "Fujitsu Siemens Computers GmbH B22W-5 YE6P522530" mode 1680x1050 position 0,30
+    output "Lenovo Group Limited C24-25 U76090DC" position 1680,0
+    output "Fujitsu Siemens Computers GmbH B22W-6 LED YV3U174780" mode 1680x1050 position 3600,30
 }
 
+profile "basement" {
+    # 2 External Monitors + Laptop Display
+    output "eDP-1" mode 1920x1080 position 0,180 scale 1.2
+    output "Lenovo Group Limited C24-25 U76090DC" position 1600,0
+    output "LG Electronics E2411 212NDTC14729" position 3520,0
+}
 
 profile "mobile" {
-    # MOBILE MODE (Just the laptop)
-    output "eDP-1" enable mode 1920x1080 position 0,0 scale 1.2
+    # Laptop Only
+    #TODO: maybe its possible to make it 60Hz when on battery and 120Hz when plugged in or some 
+    output "eDP-1" enable mode 1920x1200@60Hz position 0,0 scale 1.2 
+    #adaptive_sync on
+    #output "eDP-1" enable mode 1920x1200@120Hz position 0,0 scale 1.2 adaptive_sync on
 }

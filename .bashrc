@@ -5,7 +5,17 @@
 # If not running interactively, don't do anything
 [[ $- != *i* ]] && return
 
+# History: big file, no duplicates, share across terminals
+HISTSIZE=50000
+HISTFILESIZE=100000
+HISTCONTROL=ignoreboth:erasedups
+shopt -s histappend
+
+# Append to history file immediately (not just on exit)
+PROMPT_COMMAND="history -a;$PROMPT_COMMAND"
+
 alias wpass='nmcli device wifi show-password'
+alias ls='ls --color=auto'
 alias grep='grep --color=auto'
 PS1='[\u@\h \W]\$ '
 
