@@ -1,0 +1,12 @@
+[Unit]
+Description=4-finger tap on touchpad toggles media play/pause (raw evdev)
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/michi/bin/tap4-play-pause.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target
