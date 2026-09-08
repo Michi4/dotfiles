@@ -1,22 +1,45 @@
 #!/usr/bin/env python3
 """paste-redact - hybrid secret redactor for pasted text (fully offline).
 
-Pipeline: normalize -> custom regex -> gitleaks -> local LLM (ollama) -> redacted text.
+Pipeline: normalize -> custom regex -> (gitleaks || LLM in parallel) -> redacted text.
 Usage:
-  paste-redact --auto [--strict] [--report PATH] [FILE]     print redacted text to stdout
-  paste-redact --preview-out PREFIX [--strict] [FILE]        write PREFIX.redacted.txt + PREFIX.report.json
+  paste-redact --auto [--strict] [--report PATH] [FILE]   redacted text + stats footer to stdout
+  paste-redact --preview [--strict] [--report PATH] [FILE] interactive color preview, final text to stdout (exit 2 = aborted)
+  paste-redact --preview-out PREFIX [--strict] [FILE]      write PREFIX.redacted.txt + PREFIX.report.json
+  paste-redact --selftest                                  run test corpus, exit 0 iff all pass
 Reads stdin when FILE is omitted. Secrets only - hostnames/IPs/paths are kept.
 """
+import concurrent.futures
+import html
 import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 
 HOME = os.path.expanduser("~")
 CFG_DIR = os.path.join(HOME, ".config", "paste-redact")
+
+TAG_RX = re.compile(r"\[REDACTED_[A-Z0-9-]+\]")
+PROMPT_RX = re.compile(r"^\[[^\]]+[@:][^\]]*\][#$] ?(.*)$")
+
+# ANSI colors (preview runs in a terminal)
+BOLD = "\x1b[1m"
+CYAN = "\x1b[36m"
+DIM = "\x1b[2m"
+RED = "\x1b[31m"
+YEL = "\x1b[43m\x1b[30m"
+RST = "\x1b[0m"
+
+SELFTEST_CASES = [
+    ("case1_aws_password.txt", 3),
+    ("case2_prose_tokens.txt", 2),
+    ("case3_key_urlcreds.txt", 2),
+    ("case4_fastfetch_negative.txt", 0),
+]
 
 
 def load_config():
@@ -27,8 +50,8 @@ def load_config():
 LLM_PROMPT = """You scan pasted text for secrets to redact. Flag anything that looks like a password, API key, token, or credential - when in doubt, FLAG IT. Missing a secret is worse than flagging an extra candidate.
 Do NOT flag: hostnames, usernames, IP addresses, file paths, version numbers, port numbers, ordinary words, git commit hashes. Ignore anything already masked as [REDACTED_...].
 Examples:
-TEXT: export KEY="AKIA5F4D3C2B1A98765"
-[{"secret": "AKIA5F4D3C2B1A98765", "label": "aws-key"}]
+TEXT: export KEY="AKIA5F4D3C2B1A987654"
+[{"secret": "AKIA5F4D3C2B1A987654", "label": "aws-key"}]
 TEXT: server srv-01 port 8080 user admin
 []
 Return ONLY a JSON array, no other text. Each item: {"secret": "<exact substring from TEXT>", "label": "<short type>"}.
@@ -49,15 +72,16 @@ def normalize(text):
     prev = None
     for line in text.split("\n"):
         # "[michi@hp835 ~]$ cmd" -> "$ cmd"; bare "....$ " prompt lines -> drop
-        m = re.match(r"^\[[^\]]+[@:][^\]]*\][#$] ?(.*)$", line)
+        m = PROMPT_RX.match(line)
         if m:
             rest = m.group(1).strip()
             if not rest:
                 continue
             line = "$ " + rest
         line = line.rstrip()
-        if line == prev:
-            continue  # collapse consecutive duplicates (echoes, repeated prompts)
+        # collapse consecutive duplicates only for prompts/empties (never code)
+        if line == prev and (not line or line.startswith("$ ") or PROMPT_RX.match(line)):
+            continue
         prev = line
         out.append(line)
     text = "\n".join(out)
@@ -78,19 +102,40 @@ def dedupe(repls):
     return out
 
 
-def apply_all(text, repls):
-    """repls: list of (start, end, label). Returns (new_text, applied_labels)."""
+def apply_all(text, repls, stage):
+    """repls: list of (start, end, label). Returns (new_text, applied entries)."""
     ordered = sorted(repls, key=lambda r: r[0], reverse=True)
     applied = []
     for s, e, label in ordered:
+        original = text[s:e]
         tag = "[REDACTED_%s]" % re.sub(r"[^A-Z0-9]+", "-", label.upper()).strip("-")
         text = text[:s] + tag + text[e:]
-        applied.append((label, tag))
+        applied.append({"label": label, "tag": tag, "stage": stage, "original": original})
     return text, applied
 
 
+def tag_spans(text):
+    return [(m.start(), m.end()) for m in TAG_RX.finditer(text)]
+
+
+# High-value token shapes: always on (user custom-patterns.json runs on top).
+# These must never depend on LLM luck.
+BUILTIN_PATTERNS = [
+    ("aws-key", r"\bAKIA[0-9A-Z]{16}\b"),
+    ("aws-key", r"\bASIA[0-9A-Z]{16}\b"),
+    ("github-token", r"\bgh[oupsr]_[A-Za-z0-9]{36}\b"),
+    ("github-token", r"\bgithub_pat_[A-Za-z0-9_]{22,}\b"),
+    ("gitlab-token", r"\bglpat-[A-Za-z0-9_\-]{20,}\b"),
+    ("slack-token", r"\bxox[baprs]-[A-Za-z0-9\-]{10,}\b"),
+    ("openai-key", r"\bsk-[A-Za-z0-9]{20,}\b"),
+    ("anthropic-key", r"\bsk-ant-[A-Za-z0-9\-]{10,}\b"),
+]
+
+
 def stage_custom(text, taken):
-    patterns = json.load(open(os.path.join(CFG_DIR, "custom-patterns.json")))
+    patterns = list(json.load(open(os.path.join(CFG_DIR, "custom-patterns.json"))))
+    for name, rx in BUILTIN_PATTERNS:
+        patterns.append({"name": name, "pattern": rx, "group": 0})
     repls = []
     for p in patterns:
         try:
@@ -137,8 +182,8 @@ def stage_gitleaks(text, taken):
             sl, el = max(0, fl["StartLine"] - 1), max(0, fl["EndLine"] - 1)
         except KeyError:
             continue
-        seg_start = sum(len(l) + 1 for l in lines[:sl])
-        seg_end = sum(len(l) + 1 for l in lines[:el + 1])
+        seg_start = sum(len(line) + 1 for line in lines[:sl])
+        seg_end = sum(len(line) + 1 for line in lines[:el + 1])
         segment = text[seg_start:seg_end]
         idx = 0
         while True:
@@ -153,22 +198,60 @@ def stage_gitleaks(text, taken):
     return dedupe(repls)
 
 
-def stage_llm(text, taken, cfg, strict):
-    body = json.dumps({
-        "model": cfg["strict_model"] if strict else cfg["model"],
-        "prompt": (LLM_PROMPT_STRICT if strict else LLM_PROMPT).replace("<<<TEXT>>>", text),
-        "stream": False, "format": "json", "keep_alive": cfg.get("keep_alive", "2m"),
-        "options": {"temperature": cfg["strict_temperature"] if strict else cfg["temperature"],
-                    "num_ctx": cfg["num_ctx"], "num_predict": cfg["num_predict"]},
-    }).encode()
-    req = urllib.request.Request(cfg["ollama_url"] + "/api/generate", data=body,
-                                 headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=cfg.get("request_timeout", 150)) as r:
-            resp = json.loads(r.read().decode())["response"]
-        spans = json.loads(resp)
-    except Exception as ex:
-        print("llm stage failed (%s) - continuing with deterministic results" % ex, file=sys.stderr)
+# Shapes that are never secrets (the LLM occasionally flags them anyway,
+# e.g. an IP in fastfetch output despite the prompt exclusion) -> veto.
+VETO_RX = [
+    re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}(/\d{1,2})?$"),          # IPv4 + CIDR
+    re.compile(r"^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$"),        # MAC
+    re.compile(r"^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$"),            # SHA-1 / SHA-256
+]
+
+
+def vetoed(secret):
+    return any(rx.match(secret.strip()) for rx in VETO_RX)
+
+
+def secret_candidates(secret):
+    cands = [secret]
+    s = secret.strip()
+    if s != secret:
+        cands.append(s)
+    q = s.strip("\"'`")
+    if q != s:
+        cands.append(q)
+    return cands
+
+
+def stage_llm(text, taken, cfg, strict, llm_stats):
+    model = cfg["strict_model"] if strict else cfg["model"]
+    prompt_tmpl = LLM_PROMPT_STRICT if strict else LLM_PROMPT
+    base_temp = cfg["strict_temperature"] if strict else cfg["temperature"]
+    spans = None
+    attempts = 0
+    for attempt in range(2):  # one retry with higher temperature
+        attempts = attempt + 1
+        body = json.dumps({
+            "model": model,
+            "prompt": prompt_tmpl.replace("<<<TEXT>>>", text),
+            "stream": False, "format": "json", "keep_alive": cfg.get("keep_alive", "15m"),
+            "options": {"temperature": base_temp + 0.2 * attempt,
+                        "num_ctx": min(4096, 768 + len(text)),
+                        "num_predict": cfg["num_predict"]},
+        }).encode()
+        req = urllib.request.Request(cfg["ollama_url"] + "/api/generate", data=body,
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=cfg.get("request_timeout", 150)) as r:
+                resp = json.loads(r.read().decode())["response"]
+            spans = json.loads(resp)
+            break
+        except Exception as ex:
+            print("llm attempt %d failed (%s)" % (attempts, ex), file=sys.stderr)
+    llm_stats["attempts"] = attempts
+    llm_stats["model"] = model
+    if spans is None:
+        print("llm stage failed - continuing with deterministic results", file=sys.stderr)
+        llm_stats["failed"] = True
         return []
     if isinstance(spans, dict):
         spans = [spans] if "secret" in spans else spans.get("secrets", spans.get("findings", []))
@@ -182,43 +265,177 @@ def stage_llm(text, taken, cfg, strict):
         label = item.get("label", "LLM") or "LLM"
         if not secret or len(secret) < 3:
             continue
-        idx = 0
-        while True:
-            idx = text.find(secret, idx)
-            if idx < 0:
+        if vetoed(secret):
+            continue
+        matched = False
+        for cand in secret_candidates(secret):
+            if len(cand) < 3:
+                continue
+            idx = 0
+            while True:
+                idx = text.find(cand, idx)
+                if idx < 0:
+                    break
+                e = idx + len(cand)
+                if not overlapping(taken, idx, e):
+                    repls.append((idx, e, str(label)))
+                    taken.append((idx, e))
+                    matched = True
+                idx += 1
+            if matched:
                 break
-            e = idx + len(secret)
-            if not overlapping(taken, idx, e):
-                repls.append((idx, e, str(label)))
-                taken.append((idx, e))
-            idx += 1
+        if not matched:
+            llm_stats["unmatched"].append(secret[:60])
     return dedupe(repls)
 
 
 def redact(text, cfg, strict=False):
-    taken = []
+    """Returns (redacted_text, applied, stats). applied entries hold label/tag/stage/original."""
+    stats = {"strict": strict, "stages": {}, "timings": {},
+             "llm": {"attempts": 0, "model": cfg["strict_model"] if strict else cfg["model"],
+                     "failed": False, "unmatched": []}}
+    t_all = time.perf_counter()
     text = normalize(text)
     if not text:
-        return "", []
-    all_applied = []
-    for stage in (lambda t: stage_custom(t, taken),
-                  lambda t: stage_gitleaks(t, taken),
-                  lambda t: stage_llm(t, taken, cfg, strict)):
-        repls = stage(text)
-        text, applied = apply_all(text, repls)
-        # recompute taken offsets after replacement: simplest correct approach is
-        # to rebuild taken from applied tags - instead, we re-derive: tags are new
-        # text, so reset taken to tag spans to keep later stages from touching them
-        taken = [(m.start(), m.end()) for m in re.finditer(r"\[REDACTED_[A-Z0-9-]+\]", text)]
-        all_applied += applied
-    return text, all_applied
+        stats["timings"]["total"] = 0.0
+        return "", [], stats
+
+    # custom regex first (fast, sync) - its tags are visible to the next stages
+    taken = []
+    t0 = time.perf_counter()
+    c_repls = stage_custom(text, taken)
+    stats["timings"]["custom"] = time.perf_counter() - t0
+    text, c_applied = apply_all(text, c_repls, "regex")
+    taken = tag_spans(text)
+    applied = list(c_applied)
+    stats["stages"]["regex"] = len(c_applied)
+
+    # gitleaks and LLM overlap in wall-clock time on the same tagged text
+    t0 = time.perf_counter()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+        fg = ex.submit(stage_gitleaks, text, list(taken))
+        fl = ex.submit(stage_llm, text, list(taken), cfg, strict, stats["llm"])
+        g_repls = fg.result()
+        l_repls = fl.result()
+    stats["timings"]["detect_parallel"] = time.perf_counter() - t0
+
+    g_repls = [(s, e, lb) for s, e, lb in g_repls if not overlapping(taken, s, e)]
+    text, g_applied = apply_all(text, g_repls, "gitleaks")
+    taken = tag_spans(text)
+    applied += g_applied
+    stats["stages"]["gitleaks"] = len(g_applied)
+
+    l_repls = [(s, e, lb) for s, e, lb in l_repls if not overlapping(taken, s, e)]
+    text, l_applied = apply_all(text, l_repls, "llm")
+    applied += l_applied
+    stats["stages"]["llm"] = len(l_applied)
+
+    stats["timings"]["total"] = time.perf_counter() - t_all
+    return text, applied, stats
+
+
+def summarize(applied, stats):
+    counts = {}
+    for a in applied:
+        counts[a["label"]] = counts.get(a["label"], 0) + 1
+    total = stats["timings"].get("total", 0.0)
+    if not applied:
+        summary = "clean (nothing redacted)"
+        footer = "[paste-redact · clean · %.1fs]" % total
+    else:
+        labels = ", ".join(sorted(counts))
+        summary = "%d replacement%s (%s)" % (
+            len(applied), "" if len(applied) == 1 else "s",
+            ", ".join("%s x%d" % (k, v) for k, v in sorted(counts.items())))
+        footer = "[paste-redact · %d× redacted: %s · %s · %.1fs]" % (
+            len(applied), labels, stats["llm"]["model"], total)
+    return summary, footer, counts
+
+
+def highlight(text):
+    return TAG_RX.sub(lambda m: YEL + m.group(0) + RST, text)
+
+
+def prompt_tty(question):
+    try:
+        with open("/dev/tty", "r") as tty:
+            sys.stderr.write(question)
+            sys.stderr.flush()
+            return tty.readline().strip().lower()
+    except OSError:
+        return ""  # no terminal: accept
+
+
+def run_preview(raw, cfg, strict=False):
+    if not raw.strip():
+        print("paste-redact: empty input", file=sys.stderr)
+        return None, [], {"timings": {}}, 1
+    real_stdout = sys.stdout
+    sys.stdout = sys.stderr  # UI -> terminal; only the final text uses real stdout
+    try:
+        return _run_preview_ui(raw, cfg, strict)
+    finally:
+        sys.stdout = real_stdout
+
+
+def _run_preview_ui(raw, cfg, strict=False):
+    for rnd in (1, 2, 3):
+        redacted, applied, stats = redact(raw, cfg, strict)
+        summary, _footer, _counts = summarize(applied, stats)
+        print("%s%spaste-redact Vorschau · Runde %d · %s%s" % (BOLD, CYAN, rnd, summary, RST))
+        print("%s[%d Fundstellen, %.1fs, %s]%s" % (
+            DIM, len(applied), stats["timings"].get("total", 0), stats["llm"]["model"], RST))
+        print("=" * 64, file=sys.stderr)
+        print(highlight(redacted).rstrip("\n"))
+        print("=" * 64, file=sys.stderr)
+        if applied:
+            print("%sErsetzungen:%s" % (BOLD, RST))
+            for i, a in enumerate(applied, 1):
+                print("  %s#%d %s [%s]%s → %s%s%s" % (
+                    DIM, i, a["label"], a["stage"], RST, RED, a["original"][:120], RST))
+        else:
+            print("%sKeine Secrets gefunden.%s" % (DIM, RST))
+        choice = prompt_tty("[↵] Passt   [r] Retry (strenger)   [q] Abbrechen: ")
+        if choice in ("", "y", "j", "p"):
+            return redacted, applied, stats, 0
+        if choice.startswith("r"):
+            strict = True
+            continue
+        return None, applied, stats, 2
+    return redacted, applied, stats, 0
+
+
+def run_selftest(cfg):
+    cfg = dict(cfg)
+    cfg["temperature"] = 0.0  # deterministic: tests must not flake
+    cfg["strict_temperature"] = 0.0
+    testdir = os.path.join(CFG_DIR, "tests")
+    ok = True
+    for name, expected in SELFTEST_CASES:
+        with open(os.path.join(testdir, name)) as f:
+            raw = f.read()
+        t0 = time.perf_counter()
+        _red, applied, _stats = redact(raw, cfg, strict=False)
+        dt = time.perf_counter() - t0
+        good = len(applied) == expected
+        ok = ok and good
+        print("%s %-28s expected %d, got %d (%.1fs)" % (
+            "PASS" if good else "FAIL", name, expected, len(applied), dt))
+    print("selftest: " + ("ALL PASS" if ok else "FAILURES"))
+    return 0 if ok else 1
 
 
 def main():
     args = sys.argv[1:]
     strict = "--strict" in args
-    args = [a for a in args if a not in ("--strict", "--auto", "--preview")]
+    want_stats = "--stats" in args or "--auto" in args
+    want_preview = "--preview" in args
+    want_selftest = "--selftest" in args
+    args = [a for a in args if a not in ("--strict", "--auto", "--preview", "--stats", "--selftest")]
     cfg = load_config()
+
+    if want_selftest:
+        sys.exit(run_selftest(cfg))
 
     report_path = None
     if "--report" in args:
@@ -230,7 +447,6 @@ def main():
         i = args.index("--preview-out")
         preview_out = args[i + 1]
         args = args[:i] + args[i + 2:]
-    mode_auto = "--auto" in args
 
     if args and not args[0].startswith("-"):
         with open(args[0]) as f:
@@ -238,28 +454,40 @@ def main():
     else:
         raw = sys.stdin.read()
 
-    redacted, applied = redact(raw, cfg, strict)
-    counts = {}
-    for label, _tag in applied:
-        counts[label] = counts.get(label, 0) + 1
-    summary = "%d replacement%s (%s)" % (
-        len(applied), "" if len(applied) == 1 else "s",
-        ", ".join("%s x%d" % (k, v) for k, v in sorted(counts.items())) if counts else "none")
+    if want_preview:
+        redacted, applied, stats, rc = run_preview(raw, cfg, strict)
+        if redacted is None:
+            print("paste-redact: preview ended without result", file=sys.stderr)
+            sys.exit(rc)
+        sys.stdout.write(redacted)
+        summary, footer, _c = summarize(applied, stats)
+        if report_path:
+            write_report_json(report_path, summary, footer, applied, stats)
+        print("paste-redact: " + summary, file=sys.stderr)
+        sys.exit(rc)
+
+    redacted, applied, stats = redact(raw, cfg, strict)
+    summary, footer, _counts = summarize(applied, stats)
+    out = redacted + ("\n" + footer + "\n" if want_stats and redacted else (footer + "\n" if want_stats else ""))
 
     if preview_out:
         with open(preview_out + ".redacted.txt", "w") as f:
             f.write(redacted)
-        with open(preview_out + ".report.json", "w") as f:
-            json.dump({"summary": summary, "count": len(applied),
-                       "replacements": [{"label": l, "tag": t} for l, t in applied]}, f)
+        write_report_json(preview_out + ".report.json", summary, footer, applied, stats)
         print(preview_out, flush=True)
     else:
-        sys.stdout.write(redacted)
+        sys.stdout.write(out)
     if report_path:
-        with open(report_path, "w") as f:
-            json.dump({"summary": summary, "count": len(applied),
-                       "replacements": [{"label": l, "tag": t} for l, t in applied]}, f)
+        write_report_json(report_path, summary, footer, applied, stats)
     print("paste-redact: " + summary, file=sys.stderr)
+
+
+def write_report_json(path, summary, footer, applied, stats):
+    with open(path, "w") as f:
+        json.dump({"summary": summary, "footer": footer, "count": len(applied),
+                   "replacements": [{"label": a["label"], "tag": a["tag"], "stage": a["stage"]}
+                                    for a in applied],
+                   "stats": stats}, f)
 
 
 if __name__ == "__main__":
