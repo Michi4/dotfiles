@@ -46,6 +46,9 @@ install_packages() {
         Thunar
         nextcloud-client
 
+        # Redaction & gestures
+        wl-clipboard zenity gitleaks ollama-vulkan
+
         # Fonts
         ttf-jetbrains-mono-nerd
         noto-fonts noto-fonts-emoji
@@ -149,6 +152,9 @@ link .npmrc
 
 # Sway
 link .config/sway/config
+for f in .config/sway/scripts/*.sh .config/sway/scripts/*.py; do
+    link "$f"
+done
 
 # Waybar
 link .config/waybar/config.jsonc
@@ -190,6 +196,15 @@ link .config/copyq/copyq-commands.ini
 link .config/copyq/copyq_tabs.ini
 link .config/copyq/copyq-filter.ini
 
+# Clipboard redaction & media tap
+link .config/paste-redact/config.json
+link .config/paste-redact/custom-patterns.json
+link .config/systemd/user/tap4.service
+if command -v ollama &>/dev/null; then
+    ollama pull qwen2.5:1.5b
+    ollama pull qwen2.5:3b
+fi
+
 # VS Code
 link .config/Code/User/settings.json
 
@@ -202,4 +217,6 @@ echo ""
 info "Done!"
 echo "  Backups: $BACKUP_DIR"
 echo "  Restart: swaymsg reload"
+systemctl --user daemon-reload 2>/dev/null
+systemctl --user enable --now tap4.service 2>/dev/null || true
 echo ""
