@@ -22,6 +22,9 @@ bash <(curl -fsSL https://raw.githubusercontent.com/Michi4/dotfiles/main/restore
 | Config | Tool |
 |--------|------|
 | `sway/config` | Sway WM - keybinds, workspace rules, autostart |
+| `sway/scripts/` | Window/session helpers (firefox merge, mattermost stash, idle, brightness) |
+| `bin/tap4-play-pause.py` + `systemd/user/tap4.service` | 4-finger touchpad tap toggles play/pause (raw evdev) |
+| `bin/paste-redact`, `bin/paste-redact-clip` | Local AI secret redaction for clipboard (ollama + gitleaks) |
 | `waybar/` | Status bar + custom scripts |
 | `wofi/` | App launcher (Nord themed) |
 | `foot/foot.ini` | Terminal emulator |
