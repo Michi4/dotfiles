@@ -1,0 +1,14 @@
+[michi@hp835 ~]$ fastfetch
+                   -`                     michi@hp835
+                  .o+`                    -----------
+                  `ooo/                   OS: Arch Linux x86_64
+                 `+oooo:                  Host: XPS 13 9340
+                `+oooooo:                 Kernel: Linux 7.2.3-arch1-3
+                -+oooooo+:                Uptime: 1 day, 2 hours, 18 mins
+               `/:-:++oooo+:              Packages: 6 (flatpak), 1340 (pacman)
+              `/++++/+++++++:             Shell: bash 5.3.15
+              Terminal: foot 1.28.0
+              CPU: Intel(R) Core(TM) Ultra 7 155H (12+8+2) @ 4.80 GHz
+              Local IP (wlan0): 192.168.1.172/24
+              Battery (DELL NXRKW41A): 54% [AC Connected, Charging]
+[michi@hp835 ~]$

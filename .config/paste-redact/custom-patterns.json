@@ -1,0 +1,22 @@
+[
+  {
+    "name": "PASSWORD-ASSIGN",
+    "group": 2,
+    "pattern": "(?i)(password|passwd|pwd|passwort|secret|api[_-]?key|apikey|auth[_-]?token|access[_-]?token)\\s*[\"']?\\s*[:=]\\s*[\"']?([^\\s\"'<>]{4,})"
+  },
+  {
+    "name": "PEM-BLOCK",
+    "group": 0,
+    "pattern": "-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----"
+  },
+  {
+    "name": "URL-PASSWORD",
+    "group": 3,
+    "pattern": "(?i)(https?://)([^/\\s:@]+):([^/\\s@]+)@"
+  },
+  {
+    "name": "BEARER-JWT",
+    "group": 0,
+    "pattern": "(?i)bearer\\s+[A-Za-z0-9\\-_]+\\.[A-Za-z0-9\\-_]+\\.[A-Za-z0-9\\-_]+"
+  }
+]

@@ -1,0 +1,11 @@
+{
+  "model": "qwen2.5:1.5b",
+  "ollama_url": "http://127.0.0.1:11434",
+  "num_ctx": 2048,
+  "num_predict": 300,
+  "temperature": 0.2,
+  "strict_temperature": 0.4,
+  "keep_alive": "15m",
+  "request_timeout": 150,
+  "strict_model": "qwen2.5:3b"
+}

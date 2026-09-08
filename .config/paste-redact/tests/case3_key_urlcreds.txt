@@ -1,0 +1,9 @@
+[michi@hp835 ~]$ cat key.pem
+-----BEGIN RSA PRIVATE KEY-----
+MIIEpAIBAAKCAQEA7b8t fictional fake key data not real at all 12345
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+-----END RSA PRIVATE KEY-----
+[michi@hp835 ~]$ curl -u admin:hunter2pass https://example.com/api/v1/status
+{"status": "ok"}
+[michi@hp835 ~]$

@@ -1,0 +1,3 @@
+hey, kannst du mal schauen warum der deploy failed? ich hab hier meinen token zum testen reinkopiert: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c
+und mein github token ist ghp_9f8e7d6c5b4a32109f8e7d6c5b4a32109f8e
+danke!

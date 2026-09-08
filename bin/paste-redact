@@ -1,0 +1,266 @@
+#!/usr/bin/env python3
+"""paste-redact - hybrid secret redactor for pasted text (fully offline).
+
+Pipeline: normalize -> custom regex -> gitleaks -> local LLM (ollama) -> redacted text.
+Usage:
+  paste-redact --auto [--strict] [--report PATH] [FILE]     print redacted text to stdout
+  paste-redact --preview-out PREFIX [--strict] [FILE]        write PREFIX.redacted.txt + PREFIX.report.json
+Reads stdin when FILE is omitted. Secrets only - hostnames/IPs/paths are kept.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import urllib.request
+
+HOME = os.path.expanduser("~")
+CFG_DIR = os.path.join(HOME, ".config", "paste-redact")
+
+
+def load_config():
+    with open(os.path.join(CFG_DIR, "config.json")) as f:
+        return json.load(f)
+
+
+LLM_PROMPT = """You scan pasted text for secrets to redact. Flag anything that looks like a password, API key, token, or credential - when in doubt, FLAG IT. Missing a secret is worse than flagging an extra candidate.
+Do NOT flag: hostnames, usernames, IP addresses, file paths, version numbers, port numbers, ordinary words, git commit hashes. Ignore anything already masked as [REDACTED_...].
+Examples:
+TEXT: export KEY="AKIA5F4D3C2B1A98765"
+[{"secret": "AKIA5F4D3C2B1A98765", "label": "aws-key"}]
+TEXT: server srv-01 port 8080 user admin
+[]
+Return ONLY a JSON array, no other text. Each item: {"secret": "<exact substring from TEXT>", "label": "<short type>"}.
+TEXT:
+<<<TEXT>>>
+"""
+
+LLM_PROMPT_STRICT = LLM_PROMPT.replace(
+    "when in doubt, FLAG IT.",
+    "when in doubt, FLAG IT. Be EXTRA aggressive: also flag weak-looking passwords, short tokens, and anything remotely credential-shaped.",
+)
+
+
+def normalize(text):
+    text = re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]", "", text)  # ANSI escapes
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    out = []
+    prev = None
+    for line in text.split("\n"):
+        # "[michi@hp835 ~]$ cmd" -> "$ cmd"; bare "....$ " prompt lines -> drop
+        m = re.match(r"^\[[^\]]+[@:][^\]]*\][#$] ?(.*)$", line)
+        if m:
+            rest = m.group(1).strip()
+            if not rest:
+                continue
+            line = "$ " + rest
+        line = line.rstrip()
+        if line == prev:
+            continue  # collapse consecutive duplicates (echoes, repeated prompts)
+        prev = line
+        out.append(line)
+    text = "\n".join(out)
+    text = re.sub(r"\n{4,}", "\n\n\n", text)
+    return text.strip() + "\n" if text.strip() else ""
+
+
+def overlapping(spans, s, e):
+    return any(s < oe and e > os for os, oe in spans)
+
+
+def dedupe(repls):
+    """Drop overlapping spans within one stage, preferring the longest."""
+    out = []
+    for s, e, label in sorted(repls, key=lambda r: (r[1] - r[0]), reverse=True):
+        if not overlapping([(os, oe) for os, oe, _ in out], s, e):
+            out.append((s, e, label))
+    return out
+
+
+def apply_all(text, repls):
+    """repls: list of (start, end, label). Returns (new_text, applied_labels)."""
+    ordered = sorted(repls, key=lambda r: r[0], reverse=True)
+    applied = []
+    for s, e, label in ordered:
+        tag = "[REDACTED_%s]" % re.sub(r"[^A-Z0-9]+", "-", label.upper()).strip("-")
+        text = text[:s] + tag + text[e:]
+        applied.append((label, tag))
+    return text, applied
+
+
+def stage_custom(text, taken):
+    patterns = json.load(open(os.path.join(CFG_DIR, "custom-patterns.json")))
+    repls = []
+    for p in patterns:
+        try:
+            rx = re.compile(p["pattern"])
+        except re.error as ex:
+            print("bad custom pattern %s: %s" % (p.get("name"), ex), file=sys.stderr)
+            continue
+        for m in rx.finditer(text):
+            g = p.get("group", 0)
+            try:
+                s, e = m.span(g)
+            except IndexError:
+                continue
+            if e > s and not overlapping(taken, s, e):
+                repls.append((s, e, p.get("name", "CUSTOM")))
+                taken.append((s, e))
+    return dedupe(repls)
+
+
+def stage_gitleaks(text, taken):
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+        f.write(text)
+        src = f.name
+    try:
+        p = subprocess.run(
+            ["gitleaks", "detect", "--no-git", "--source", src,
+             "--report-format", "json", "--report-path", "-", "--exit-code", "0",
+             "--no-color"],
+            capture_output=True, text=True, timeout=120)
+        try:
+            findings = json.loads(p.stdout or "[]")
+        except json.JSONDecodeError:
+            print("gitleaks: unparsable output", file=sys.stderr)
+            return []
+    finally:
+        os.unlink(src)
+    lines = text.split("\n")
+    repls = []
+    for fl in findings:
+        secret = fl.get("Secret", "")
+        if not secret:
+            continue
+        try:
+            sl, el = max(0, fl["StartLine"] - 1), max(0, fl["EndLine"] - 1)
+        except KeyError:
+            continue
+        seg_start = sum(len(l) + 1 for l in lines[:sl])
+        seg_end = sum(len(l) + 1 for l in lines[:el + 1])
+        segment = text[seg_start:seg_end]
+        idx = 0
+        while True:
+            idx = segment.find(secret, idx)
+            if idx < 0:
+                break
+            s, e = seg_start + idx, seg_start + idx + len(secret)
+            if not overlapping(taken, s, e):
+                repls.append((s, e, fl.get("RuleID", "GITLEAKS")))
+                taken.append((s, e))
+            idx += 1
+    return dedupe(repls)
+
+
+def stage_llm(text, taken, cfg, strict):
+    body = json.dumps({
+        "model": cfg["strict_model"] if strict else cfg["model"],
+        "prompt": (LLM_PROMPT_STRICT if strict else LLM_PROMPT).replace("<<<TEXT>>>", text),
+        "stream": False, "format": "json", "keep_alive": cfg.get("keep_alive", "2m"),
+        "options": {"temperature": cfg["strict_temperature"] if strict else cfg["temperature"],
+                    "num_ctx": cfg["num_ctx"], "num_predict": cfg["num_predict"]},
+    }).encode()
+    req = urllib.request.Request(cfg["ollama_url"] + "/api/generate", data=body,
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=cfg.get("request_timeout", 150)) as r:
+            resp = json.loads(r.read().decode())["response"]
+        spans = json.loads(resp)
+    except Exception as ex:
+        print("llm stage failed (%s) - continuing with deterministic results" % ex, file=sys.stderr)
+        return []
+    if isinstance(spans, dict):
+        spans = [spans] if "secret" in spans else spans.get("secrets", spans.get("findings", []))
+    if not isinstance(spans, list):
+        return []
+    repls = []
+    for item in spans:
+        if not isinstance(item, dict):
+            continue
+        secret = item.get("secret", "")
+        label = item.get("label", "LLM") or "LLM"
+        if not secret or len(secret) < 3:
+            continue
+        idx = 0
+        while True:
+            idx = text.find(secret, idx)
+            if idx < 0:
+                break
+            e = idx + len(secret)
+            if not overlapping(taken, idx, e):
+                repls.append((idx, e, str(label)))
+                taken.append((idx, e))
+            idx += 1
+    return dedupe(repls)
+
+
+def redact(text, cfg, strict=False):
+    taken = []
+    text = normalize(text)
+    if not text:
+        return "", []
+    all_applied = []
+    for stage in (lambda t: stage_custom(t, taken),
+                  lambda t: stage_gitleaks(t, taken),
+                  lambda t: stage_llm(t, taken, cfg, strict)):
+        repls = stage(text)
+        text, applied = apply_all(text, repls)
+        # recompute taken offsets after replacement: simplest correct approach is
+        # to rebuild taken from applied tags - instead, we re-derive: tags are new
+        # text, so reset taken to tag spans to keep later stages from touching them
+        taken = [(m.start(), m.end()) for m in re.finditer(r"\[REDACTED_[A-Z0-9-]+\]", text)]
+        all_applied += applied
+    return text, all_applied
+
+
+def main():
+    args = sys.argv[1:]
+    strict = "--strict" in args
+    args = [a for a in args if a not in ("--strict", "--auto", "--preview")]
+    cfg = load_config()
+
+    report_path = None
+    if "--report" in args:
+        i = args.index("--report")
+        report_path = args[i + 1]
+        args = args[:i] + args[i + 2:]
+    preview_out = None
+    if "--preview-out" in args:
+        i = args.index("--preview-out")
+        preview_out = args[i + 1]
+        args = args[:i] + args[i + 2:]
+    mode_auto = "--auto" in args
+
+    if args and not args[0].startswith("-"):
+        with open(args[0]) as f:
+            raw = f.read()
+    else:
+        raw = sys.stdin.read()
+
+    redacted, applied = redact(raw, cfg, strict)
+    counts = {}
+    for label, _tag in applied:
+        counts[label] = counts.get(label, 0) + 1
+    summary = "%d replacement%s (%s)" % (
+        len(applied), "" if len(applied) == 1 else "s",
+        ", ".join("%s x%d" % (k, v) for k, v in sorted(counts.items())) if counts else "none")
+
+    if preview_out:
+        with open(preview_out + ".redacted.txt", "w") as f:
+            f.write(redacted)
+        with open(preview_out + ".report.json", "w") as f:
+            json.dump({"summary": summary, "count": len(applied),
+                       "replacements": [{"label": l, "tag": t} for l, t in applied]}, f)
+        print(preview_out, flush=True)
+    else:
+        sys.stdout.write(redacted)
+    if report_path:
+        with open(report_path, "w") as f:
+            json.dump({"summary": summary, "count": len(applied),
+                       "replacements": [{"label": l, "tag": t} for l, t in applied]}, f)
+    print("paste-redact: " + summary, file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

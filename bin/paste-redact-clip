@@ -1,0 +1,54 @@
+#!/bin/bash
+# paste-redact-clip {auto|preview} - clipboard frontend for paste-redact.
+#   auto:    clipboard -> redact -> clipboard (notify with count)
+#   preview: zenity dialog with result, buttons Passt / Retry (stricter) / Abbrechen
+MODE="${1:-preview}"
+IN=$(mktemp /tmp/paste-redact-in.XXXXXX)
+OUT=/tmp/paste-redact
+trap 'rm -f "$IN" /tmp/pr-zenity-out.txt' EXIT
+
+if ! wl-paste > "$IN" 2>/dev/null || [ ! -s "$IN" ]; then
+  notify-send "paste-redact" "Kein Text im Clipboard" 2>/dev/null
+  exit 1
+fi
+
+summary_of() {
+  python3 -c "import json;print(json.load(open('$OUT.report.json'))['summary'])" 2>/dev/null
+}
+
+if [ "$MODE" = auto ]; then
+  /home/michi/bin/paste-redact --auto --report "$OUT.report.json" < "$IN" > "$OUT.redacted.txt"
+  wl-copy < "$OUT.redacted.txt"
+  notify-send "paste-redact" "$(summary_of) - redacted Version im Clipboard" 2>/dev/null
+  exit 0
+fi
+
+# preview loop (max 3 rounds, Retry re-runs strictly)
+STRICT=""
+for round in 1 2 3; do
+  # shellcheck disable=SC2086
+  /home/michi/bin/paste-redact --preview-out "$OUT" $STRICT < "$IN" >/dev/null
+  {
+    echo "paste-redact Vorschau (Runde $round) - $(summary_of)"
+    echo "[REDACTED_*] markiert die ersetzten Stellen."
+    echo "================================================================"
+    cat "$OUT.redacted.txt"
+  } > "$OUT.display.txt"
+  : > /tmp/pr-zenity-out.txt
+  zenity --text-info --filename="$OUT.display.txt" --title="paste-redact Vorschau" \
+    --width=900 --height=650 --ok-label="Passt" --cancel-label="Abbrechen" \
+    --extra-button="Retry (strenger)" > /tmp/pr-zenity-out.txt 2>/dev/null
+  RC=$?
+  ZOUT=$(cat /tmp/pr-zenity-out.txt)
+  if [[ "$ZOUT" == *"Retry"* ]]; then
+    STRICT="--strict"
+    continue
+  fi
+  if [ $RC -eq 0 ]; then
+    wl-copy < "$OUT.redacted.txt"
+    notify-send "paste-redact" "$(summary_of) - übernommen" 2>/dev/null
+  fi
+  exit 0
+done
+wl-copy < "$OUT.redacted.txt"
+notify-send "paste-redact" "Max. Runden erreicht - letzte Version übernommen" 2>/dev/null
