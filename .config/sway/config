@@ -18,6 +18,11 @@ exec --no-startup-id gnome-keyring-daemon --start --components=pkcs11,secrets,ss
 
 exec --no-startup-id nextcloud
 
+# Mattermost: stash main window ONCE at startup (toggle with $mod+minus, stash with $mod+Shift+minus)
+# One-shot script on purpose - a for_window rule would also swallow call-widget/incoming-call windows.
+exec --no-startup-id mattermost-desktop
+exec --no-startup-id ~/.config/sway/scripts/launch-mattermost-stash.sh
+
 # Default config for sway
 #
 # Copy this to ~/.config/sway/config and edit it to your liking.
@@ -122,12 +127,12 @@ bindsym $mod+Shift+b exec ~/.config/sway/scripts/auto-brightness.sh toggle  # au
 # Example configuration:
 #
    input type:touchpad {
-       #dwt disabled
-       tap enabled
-       natural_scroll enabled
-       middle_emulation enabled
-       pointer_accel 0.25
-   }
+        dwt disabled
+        tap enabled
+        natural_scroll enabled
+        middle_emulation enabled
+        pointer_accel 0.25
+    }
 #
    input type:keyboard {
        xkb_layout "de"
@@ -204,6 +209,10 @@ bindsym $mod+Shift+b exec ~/.config/sway/scripts/auto-brightness.sh toggle  # au
     # Copyq clipboard manager
     bindsym $mod+v exec copyq toggle
 
+    # Paste-Redact: $mod+Shift+v = direkt ersetzen, $mod+Ctrl+Shift+v = Vorschau (Passt/Retry/Abbrechen)
+    bindsym $mod+Shift+v exec /home/michi/bin/paste-redact-clip auto
+    bindsym $mod+Ctrl+Shift+v exec /home/michi/bin/paste-redact-clip preview
+
     for_window [app_id="copyq"] floating enable
     for_window [app_id="pavucontrol"] floating enable
     for_window [app_id="qalculate-gtk"] floating enable
@@ -211,6 +220,8 @@ bindsym $mod+Shift+b exec ~/.config/sway/scripts/auto-brightness.sh toggle  # au
 
     #bindgesture scroll:3:up   exec volumectl +1%
     #bindgesture scroll:3:down exec volumectl -1%
+    # 4-finger touch & briefly hold: play/pause toggle (quick swipes unaffected - movement cancels hold)
+    bindgesture hold:4 exec playerctl play-pause
 
     # Kill focused window
     bindsym $mod+Shift+q kill
@@ -436,13 +447,15 @@ assign [app_id="thunderbird"] workspace number 4
 exec MOZ_ENABLE_WAYLAND=1 thunderbird
 # Zoiper autostart disabled per user request (2026-08-22) - was: exec zoiper
 
-# --- Firefox: Main collaboration window (visible, workspace 1) ---
-# Zulip (collaboration.koerbler.com) + Vikunja + Support + AI Studio -> single Firefox window, always visible
+# --- Firefox: Main window (visible, workspace 5) ---
+# Support + Zulip + AI Studio -> single Firefox window, always visible
+# Session restore is ON (browser.startup.page=3); the script repairs splits via
+# merge-firefox-windows.py, restores, and moves the window to workspace 5.
 exec --no-startup-id ~/.config/sway/scripts/launch-main-firefox.sh
 
 # --- Firefox: Stash window (scratchpad / stash, toggle with $mod+minus, stash with $mod+Shift+minus) ---
-# WhatsApp + Kimai + ManagedWP (InfiniteWP) + HedgeDoc (md.home.websters.at) -> separate Firefox window, auto-minimized to scratchpad ONCE at startup only
-# NOTE: No for_window move scratchpad here - that would trap every future WhatsApp/Kimai window. Only launch-stash-firefox.sh moves it once at boot.
+# Vikunja + WhatsApp + Kimai + ManagedWP + HedgeDoc -> separate Firefox window, auto-minimized to scratchpad
+# NOTE: No for_window move scratchpad here - that would trap every future stash window. Only launch-stash-firefox.sh moves it once at boot.
 exec --no-startup-id ~/.config/sway/scripts/launch-stash-firefox.sh
 
 
