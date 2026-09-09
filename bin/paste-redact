@@ -3,11 +3,14 @@
 
 Pipeline: normalize -> custom regex -> (gitleaks || LLM in parallel) -> redacted text.
 Usage:
-  paste-redact --auto [--strict] [--report PATH] [FILE]   redacted text + stats footer to stdout
-  paste-redact --preview [--strict] [--report PATH] [FILE] interactive color preview, final text to stdout (exit 2 = aborted)
+  paste-redact --auto [--strict] [--slim|--no-slim] [--report PATH] [FILE]   redacted text + stats footer to stdout
+  paste-redact --preview [--strict] [--report PATH] [FILE] interactive color preview, final text to stdout (exit 2 = aborted, 3 = original)
   paste-redact --preview-out PREFIX [--strict] [FILE]      write PREFIX.redacted.txt + PREFIX.report.json
   paste-redact --selftest                                  run test corpus, exit 0 iff all pass
 Reads stdin when FILE is omitted. Secrets only - hostnames/IPs/paths are kept.
+Preview keys: Enter ok, N/#Na/#Nt un-redact, k slim toggle, K slim default speichern,
+o original, u ohne Komprimierung, r retry, q Abbruch.
+Config ~/.config/paste-redact/config.json holds model, thresholds, slim_default.
 """
 import concurrent.futures
 import html
@@ -701,9 +704,25 @@ def prompt_tty(question):
         with open("/dev/tty", "r") as tty:
             sys.stderr.write(question)
             sys.stderr.flush()
-            return tty.readline().strip().lower()
+            return tty.readline().strip()  # case preserved (k vs K differ!)
     except OSError:
         return ""  # no terminal: accept
+
+
+def save_slim_default(value):
+    """Persist slim on/off as the default in config.json."""
+    p = os.path.join(CFG_DIR, "config.json")
+    try:
+        with open(p) as f:
+            cfg = json.load(f)
+        cfg["slim_default"] = bool(value)
+        tmp = p + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(cfg, f, indent=2)
+        os.replace(tmp, p)
+        print("slim-Standard gespeichert: %s" % ("an" if value else "aus"), file=sys.stderr)
+    except OSError as ex:
+        print("konnte Standard nicht speichern: %s" % ex, file=sys.stderr)
 
 
 def run_preview(raw, cfg, strict=False, no_compact=False):
@@ -794,7 +813,7 @@ def _run_preview_ui(raw, cfg, strict=False, no_compact=False):
         print("paste-redact: empty input", file=sys.stderr)
         return None, [], {"timings": {}}, 1
     last = (normalized, [], {"timings": {}, "llm": {"model": cfg["model"]}}, 0)
-    slim_on = False
+    slim_on = bool(cfg.get("slim_default", False))
     for rnd in (1, 2, 3):
         redacted, applied, stats = redact(raw, cfg, strict, no_compact)
         meta = build_meta(redacted, applied)
@@ -812,26 +831,33 @@ def _run_preview_ui(raw, cfg, strict=False, no_compact=False):
             render_preview(cur, meta, reverted, summary, stats, sinfo)
             last = (cur, [{"label": m["label"], "tag": m["tag"], "stage": m["stage"]}
                           for m in active], stats, 0)
+            slim_label = "an" if slim_on else "aus"
             choice = prompt_tty("[↵] Passt   [1] #1 frei   [1a] #1 alle gleich   "
-                                "[1t] #1 alle vom Typ   [k] Kompakt   [o] Original   "
-                                "[u] ohne Kompr.   [r] Retry   [q] Abbruch: ")
-            if choice in ("", "y", "j", "p"):
+                                "[1t] #1 alle vom Typ   [k] Kompakt:%s (K=speichern)   "
+                                "[o] Original   [u] ohne Kompr.   [r] Retry   [q] Abbruch: "
+                                % slim_label)
+            cl = choice.lower()
+            if cl in ("", "y", "j", "p"):
                 if reverted:
                     print("paste-redact: " + footer, file=sys.stderr)
                 return cur, last[1], stats, 0
-            if choice == "o":
+            if cl == "o":
                 return normalized, [], stats, 3
-            if choice == "k":
+            if choice == "K":
+                slim_on = not slim_on
+                save_slim_default(slim_on)
+                continue
+            if cl == "k":
                 slim_on = not slim_on
                 continue
-            if choice == "u":
+            if cl == "u":
                 no_compact = True
                 break
-            if choice.startswith("r"):
+            if cl.startswith("r"):
                 strict = True
                 break
-            m = (re.match(r"^(\d+)\s*([a-z]*)\s*$", choice)
-                 or re.match(r"^([at])\s*(\d+)\s*$", choice))
+            m = (re.match(r"^(\d+)\s*([a-z]*)\s*$", cl)
+                 or re.match(r"^([at])\s*(\d+)\s*$", cl))
             if m:
                 if m.group(1).isdigit():
                     n, flags = int(m.group(1)), (m.group(2) or "")
@@ -855,7 +881,7 @@ def _run_preview_ui(raw, cfg, strict=False, no_compact=False):
                     print("unbekannter Zusatz '%s' (nur a/t)" % flags, file=sys.stderr)
                     continue
                 continue
-            if choice == "q":
+            if cl == "q":
                 return None, last[1], stats, 2
             print("Format: <Nummer>[a|t], z.B. 1, 1a, 1t - oder k, o, u, r, q, Enter",
                   file=sys.stderr)
@@ -935,8 +961,10 @@ def main():
     want_preview = "--preview" in args
     want_selftest = "--selftest" in args
     args = [a for a in args if a not in ("--strict", "--auto", "--preview", "--stats",
-                                         "--selftest", "--no-compact", "--slim")]
+                                         "--selftest", "--no-compact", "--slim", "--no-slim")]
     cfg = load_config()
+    if "--no-slim" not in sys.argv[1:]:
+        want_slim = want_slim or bool(cfg.get("slim_default", False))
 
     if want_selftest:
         sys.exit(run_selftest(cfg))

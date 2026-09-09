@@ -18,5 +18,6 @@
   "auto_aggressive": false,
   "slim_min_len": 24,
   "slim_max_chars": 20000,
-  "slim_fuzzy": true
+  "slim_fuzzy": true,
+  "slim_default": false
 }
