@@ -114,16 +114,28 @@ def dedupe(repls):
     return out
 
 
-def apply_all(text, repls, stage):
-    """repls: list of (start, end, label). Returns (new_text, applied entries)."""
+def apply_all(text, repls, stage, applied):
+    """Apply spans right-to-left, tracking exact final (pos, end) per entry.
+
+    All entries in `applied` (old and new) keep correct positions in the
+    current text: every replacement shifts entries right of it by its delta.
+    Returns the new text; entries are appended to `applied` in place.
+    """
     ordered = sorted(repls, key=lambda r: r[0], reverse=True)
-    applied = []
+    new_entries = []
     for s, e, label in ordered:
         original = text[s:e]
         tag = "[REDACTED_%s]" % re.sub(r"[^A-Z0-9]+", "-", label.upper()).strip("-")
+        delta = len(tag) - (e - s)
         text = text[:s] + tag + text[e:]
-        applied.append({"label": label, "tag": tag, "stage": stage, "original": original})
-    return text, applied
+        for a in applied + new_entries:
+            if a["pos"] >= e:
+                a["pos"] += delta
+                a["end"] += delta
+        new_entries.append({"label": label, "tag": tag, "stage": stage,
+                            "original": original, "pos": s, "end": s + len(tag)})
+    applied.extend(new_entries)
+    return text
 
 
 def tag_spans(text):
@@ -230,6 +242,9 @@ CONTAINS_VETO_RX = [
 ]
 # cert subject/issuer attributes are output, never pasted secrets
 VETO_RX.append(re.compile(r"^(?:CN|OU|O|L|ST|C|DC|SN|GN|emailAddress)=.*"))
+# ticket/order references are not credentials either (support workflow)
+VETO_RX.append(re.compile(r"^[A-Za-z]+#\d+$"))       # Ticket#732285
+VETO_RX.append(re.compile(r"^[A-Z]{2,10}-\d{2,}$"))  # WNC-20237597 (JIRA-style)
 
 
 def vetoed(secret):
@@ -480,10 +495,9 @@ def redact(text, cfg, strict=False, no_compact=False):
     t0 = time.perf_counter()
     c_repls = stage_custom(text, taken)
     stats["timings"]["custom"] = time.perf_counter() - t0
-    text, c_applied = apply_all(text, c_repls, "regex")
+    text = apply_all(text, c_repls, "regex", applied := [])
     taken = tag_spans(text)
-    applied = list(c_applied)
-    stats["stages"]["regex"] = len(c_applied)
+    stats["stages"]["regex"] = len(applied)
 
     # gitleaks and LLM overlap in wall-clock time on the same tagged text
     t0 = time.perf_counter()
@@ -496,16 +510,16 @@ def redact(text, cfg, strict=False, no_compact=False):
     stats["timings"]["detect_parallel"] = time.perf_counter() - t0
 
     g_repls = [(s, e, lb) for s, e, lb in g_repls if not overlapping(taken, s, e)]
-    text, g_applied = apply_all(text, g_repls, "gitleaks")
+    n0 = len(applied)
+    text = apply_all(text, g_repls, "gitleaks", applied)
     taken = tag_spans(text)
-    applied += g_applied
-    stats["stages"]["gitleaks"] = len(g_applied)
+    stats["stages"]["gitleaks"] = len(applied) - n0
 
     l_repls = [(s, e, lb) for s, e, lb in l_repls if not overlapping(taken, s, e)]
-    text, l_applied = apply_all(text, l_repls, "llm")
+    n0 = len(applied)
+    text = apply_all(text, l_repls, "llm", applied)
     taken = tag_spans(text)
-    applied += l_applied
-    stats["stages"]["llm"] = len(l_applied)
+    stats["stages"]["llm"] = len(applied) - n0
     stats["llm"]["passes"] = 1
 
     # second opinion: secrets were found AND untagged lines still talk about
@@ -513,7 +527,7 @@ def redact(text, cfg, strict=False, no_compact=False):
     # Full re-scan only pays off for single-chunk inputs; big inputs get the
     # cheaper micro-focus below instead.
     if (cfg.get("llm_second_pass", True) and stats["llm"].get("chunks", 1) == 1
-            and (c_applied or g_applied or l_applied)):
+            and applied):
         untagged = "\n".join(l for l in text.split("\n") if "[REDACTED_" not in l)
         if SUSPICIOUS_RX.search(untagged):
             t0 = time.perf_counter()
@@ -521,9 +535,9 @@ def redact(text, cfg, strict=False, no_compact=False):
                            no_compact=no_compact)
             stats["timings"]["llm_pass2"] = time.perf_counter() - t0
             l2 = [(s, e, lb) for s, e, lb in l2 if not overlapping(taken, s, e)]
-            text, l2_applied = apply_all(text, l2, "llm2")
-            applied += l2_applied
-            stats["stages"]["llm2"] = len(l2_applied)
+            n0 = len(applied)
+            text = apply_all(text, l2, "llm2", applied)
+            stats["stages"]["llm2"] = len(applied) - n0
             stats["llm"]["passes"] = 2
 
     # micro-focus: lines with MORE credential keywords than already-redacted
@@ -571,10 +585,10 @@ def redact(text, cfg, strict=False, no_compact=False):
             # NOTE: no post-filter here - match_spans already validated each
             # span against taken (filtering again would self-overlap and drop all)
             m_repls = match_spans(m_spans, text, taken, cfg, stats["llm"])
-            text, m_applied = apply_all(text, m_repls, "llm-micro")
+            n0 = len(applied)
+            text = apply_all(text, m_repls, "llm-micro", applied)
             taken = tag_spans(text)
-            applied += m_applied
-            stats["stages"]["llm-micro"] = len(m_applied)
+            stats["stages"]["llm-micro"] = len(applied) - n0
             stats["timings"]["llm_micro"] = time.perf_counter() - t0
 
     stats["timings"]["total"] = time.perf_counter() - t_all
@@ -626,42 +640,31 @@ def run_preview(raw, cfg, strict=False, no_compact=False):
 
 
 def build_meta(redacted, applied):
-    """Map LTR tag occurrences to applied entries (exact for same-original
-    duplicates, best-effort for same-tag/distinct-original across stages)."""
-    occ = [(m.start(), m.end(), m.group(0)) for m in TAG_RX.finditer(redacted)]
-    by_tag = {}
-    for idx, a in enumerate(applied):
-        by_tag.setdefault(a["tag"], []).append(idx)
-    remaining = {t: len(v) for t, v in by_tag.items()}
+    """Map LTR tag occurrences to applied entries by exact (pos, end).
+
+    apply_all tracks final positions for every entry, so this mapping is
+    exact - even for same-tag/distinct-original across stages.
+    """
+    by_pos = {(a["pos"], a["end"]): a for a in applied}
     meta = []
-    for n, (s, e, tag) in enumerate(occ, 1):
-        v = by_tag.get(tag, [])
-        if remaining.get(tag, 0) > 0:
-            remaining[tag] -= 1
-            a = applied[v[remaining[tag]]]
-            meta.append({"n": n, "pos": s, "end": e, "tag": tag,
+    for n, m in enumerate(TAG_RX.finditer(redacted), 1):
+        a = by_pos.get((m.start(), m.end()))
+        if a is not None:
+            meta.append({"n": n, "pos": m.start(), "end": m.end(), "tag": a["tag"],
                          "label": a["label"], "stage": a["stage"], "original": a["original"]})
         else:
-            meta.append({"n": n, "pos": s, "end": e, "tag": tag,
+            meta.append({"n": n, "pos": m.start(), "end": m.end(), "tag": m.group(0),
                          "label": "?", "stage": "?", "original": None})
     return meta
 
 
 def render_preview(cur_text, meta, reverted, summary, stats):
-    li = stats["llm"]
-    saved = 1 - li.get("compact_chars", 1) / max(1, li.get("input_chars", 1))
-    compact_note = (" · LLM-Input −%d%%" % round(saved * 100)) if saved > 0.05 else ""
-    trunc_note = " · gekürzt" if li.get("truncated") else ""
     print("%s%spaste-redact Vorschau · %s%s" % (BOLD, CYAN, summary, RST))
-    print("%s[%d Fundstellen%s, %.1fs, %s, ctx %d%s%s]%s" % (
-        DIM, len(meta), " (%d freigegeben)" % len(reverted) if reverted else "",
-        stats["timings"].get("total", 0), li["model"],
-        li.get("num_ctx", 0), compact_note, trunc_note, RST))
     print("=" * 64)
     print(highlight(cur_text).rstrip("\n"))
     print("=" * 64)
     if meta:
-        print("%sErsetzungen (N freigeben, Na gleichlautend, Nt gleicher Typ):%s" % (BOLD, RST))
+        print("%sErsetzungen:%s" % (BOLD, RST))
         for m in meta:
             free = m["n"] in reverted
             orig = (m["original"] or m["tag"])[:100]
@@ -671,6 +674,27 @@ def render_preview(cur_text, meta, reverted, summary, stats):
                 DIM if free else RED, orig, RST))
     else:
         print("%sKeine Secrets gefunden.%s" % (DIM, RST))
+    print("-" * 64)
+    li = stats["llm"]
+    inp, out = li.get("input_chars", 0), li.get("compact_chars", 0)
+    if inp > 0:
+        saved = 1 - out / inp
+        comp_part = "LLM-Input %d→%d (−%d%%)" % (inp, out, round(saved * 100))
+    else:
+        comp_part = "LLM-Input –"
+    parts = ["%d Fundstellen%s" % (len(meta), " (%d freigegeben)" % len(reverted) if reverted else ""),
+             "%.1fs" % stats["timings"].get("total", 0), li["model"],
+             "ctx %d" % li.get("num_ctx", 0), comp_part,
+             "%d Dup-Zeilen" % li.get("dup_lines_removed", 0)]
+    if li.get("truncated"):
+        parts.append("gekürzt")
+    if li.get("chunks", 1) > 1:
+        parts.append("%d Chunks" % li["chunks"])
+    if li.get("passes", 1) > 1:
+        parts.append("2. Meinung")
+    if li.get("micro_queries"):
+        parts.append("%d Micro" % li["micro_queries"])
+    print("%sStats: %s%s" % (DIM, " · ".join(parts), RST))
 
 
 def apply_reverts(redacted, meta, reverted):
@@ -701,8 +725,8 @@ def _run_preview_ui(raw, cfg, strict=False, no_compact=False):
             render_preview(cur, meta, reverted, summary, stats)
             last = (cur, [{"label": m["label"], "tag": m["tag"], "stage": m["stage"]}
                           for m in active], stats, 0)
-            choice = prompt_tty("[↵] Passt   [N] #N frei   [Na] alle gleich   "
-                                "[Nt] alle vom Typ   [o] Original   [u] ohne Komprimierung   "
+            choice = prompt_tty("[↵] Passt   [1] #1 frei   [1a] #1 alle gleich   "
+                                "[1t] #1 alle vom Typ   [o] Original   [u] ohne Kompr.   "
                                 "[r] Retry   [q] Abbruch: ")
             if choice in ("", "y", "j", "p"):
                 if reverted:
@@ -716,27 +740,35 @@ def _run_preview_ui(raw, cfg, strict=False, no_compact=False):
             if choice.startswith("r"):
                 strict = True
                 break
-            m = re.match(r"^(\d+)([at])?$", choice)
+            m = (re.match(r"^(\d+)\s*([a-z]*)\s*$", choice)
+                 or re.match(r"^([at])\s*(\d+)\s*$", choice))
             if m:
-                n = int(m.group(1))
+                if m.group(1).isdigit():
+                    n, flags = int(m.group(1)), (m.group(2) or "")
+                else:
+                    flags, n = m.group(1), int(m.group(2))
                 entry = next((x for x in meta if x["n"] == n), None)
                 if entry is None or entry["original"] is None:
-                    print("unbekannte Nummer", file=sys.stderr)
+                    print("unbekannte Nummer (1..%d)" % len(meta), file=sys.stderr)
                     continue
-                if m.group(2) == "a":
+                if "a" in flags:
                     for x in meta:
                         if x["original"] == entry["original"]:
                             reverted.add(x["n"])
-                elif m.group(2) == "t":
+                elif "t" in flags:
                     for x in meta:
                         if x["label"] == entry["label"]:
                             reverted.add(x["n"])
-                else:
+                elif flags == "":
                     reverted.add(n)
+                else:
+                    print("unbekannter Zusatz '%s' (nur a/t)" % flags, file=sys.stderr)
+                    continue
                 continue
-            if choice in ("q", "n", "a"):
+            if choice == "q":
                 return None, last[1], stats, 2
-            print("unbekannt: Nummer, Na, Nt, o, u, r, q oder Enter", file=sys.stderr)
+            print("Format: <Nummer>[a|t], z.B. 1, 1a, 1t - oder o, u, r, q, Enter",
+                  file=sys.stderr)
     cur, appl, stats, _rc = last
     return cur, appl, stats, 0
 
@@ -766,7 +798,10 @@ def run_selftest(cfg):
         assert vetoed(h), h
     for s in ("Sommer2024!feld", "ghp_9f8e7d6c5b4a32109f8e", "My.Secret"):
         assert not vetoed(s), s
-    print("PASS veto (hostnames/IPs blocked, passwords untouched)")
+    # ticket/order references are not credentials either (support workflow)
+    for t in ("Ticket#732285", "WNC-20237597", "Issue#123"):
+        assert vetoed(t), t
+    print("PASS veto (hostnames/IPs/tickets blocked, passwords untouched)")
     # first shell prompt keeps machine context once, later ones collapse
     n = normalize("[michi@hp835 ~]$ echo hi\n[michi@hp835 ~]$ echo yo\n")
     assert n.startswith("[michi@hp835 ~]$ echo hi\n$ echo yo"), repr(n)
