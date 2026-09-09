@@ -15,5 +15,8 @@
   "llm_second_pass": true,
   "max_occurrences": 10,
   "llm_micro_focus": true,
-  "auto_aggressive": false
+  "auto_aggressive": false,
+  "slim_min_len": 24,
+  "slim_max_chars": 20000,
+  "slim_fuzzy": true
 }

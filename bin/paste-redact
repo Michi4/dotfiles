@@ -153,10 +153,6 @@ BUILTIN_PATTERNS = [
     ("slack-token", r"\bxox[baprs]-[A-Za-z0-9\-]{10,}\b"),
     ("openai-key", r"\bsk-[A-Za-z0-9]{20,}\b"),
     ("anthropic-key", r"\bsk-ant-[A-Za-z0-9\-]{10,}\b"),
-    # ticket/order refs: flagged deterministically (user reverts with 1a -
-    # a missed internal ID is worse than a one-keypress FP)
-    ("ticket-number", r"\b[A-Za-z]+#\d+\b"),
-    ("ticket-number", r"\b[A-Z]{2,10}-\d{2,}\b"),
 ]
 
 
@@ -246,6 +242,9 @@ CONTAINS_VETO_RX = [
 ]
 # cert subject/issuer attributes are output, never pasted secrets
 VETO_RX.append(re.compile(r"^(?:CN|OU|O|L|ST|C|DC|SN|GN|emailAddress)=.*"))
+# ticket/order refs are noise for this user (600+ FPs on one paste) - never redact
+VETO_RX.append(re.compile(r"^[A-Za-z]+#\d+$"))       # Ticket#732285
+VETO_RX.append(re.compile(r"^[A-Z]{2,10}-\d{2,}$"))  # WNC-20237597 (JIRA-style)
 
 
 def vetoed(secret):
@@ -354,6 +353,61 @@ def ctx_for(prompt_chars, cfg):
     want = est_tokens + cfg.get("num_predict", 300) + cfg.get("ctx_headroom", 256)
     want = max(1024, min(cfg.get("ctx_max", 8192), want))
     return (want + 255) // 256 * 256  # round up to 256
+
+
+def tok_est(chars):
+    return chars // 4
+
+
+def tok_fmt(chars):
+    t = tok_est(chars)
+    return "~%dk" % (t // 1000) if t >= 1000 else "%d" % t
+
+
+def slim_text(text, cfg):
+    """Lossy output compaction for LLM chats: fold global duplicate lines
+    (first occurrence wins), collapse blanks, enforce a size cap.
+    Short structural lines (code braces, bullets, counters) are never folded.
+    Returns (slimmed, info dict). Pure function - safe to unit-test.
+    """
+    min_len = cfg.get("slim_min_len", 24)
+    max_chars = cfg.get("slim_max_chars", 20000)
+    fuzzy = cfg.get("slim_fuzzy", True)
+    in_chars = len(text)
+    seen = set()
+    out = []
+    dup_lines = 0
+    blanks = 0
+    for raw in text.split("\n"):
+        line = raw.rstrip()
+        s = line.strip()
+        if not s:
+            blanks += 1
+            if blanks <= 1:
+                out.append("")
+            continue
+        blanks = 0
+        if len(s) >= min_len:
+            # fuzzy: lines differing only in digits fold too (log counters,
+            # timestamps, iterations) - first occurrence wins, original kept
+            key = re.sub(r"\d+", "#", s) if fuzzy else s
+            if key in seen:
+                dup_lines += 1
+                continue
+            seen.add(key)
+        out.append(line)
+    slimmed = "\n".join(out)
+    capped = False
+    if len(slimmed) > max_chars:
+        head_len = max_chars * 3 // 4
+        slimmed = (slimmed[:head_len]
+                   + "\n[... %d Zeichen gekürzt ...]\n" % (len(slimmed) - max_chars)
+                   + slimmed[-(max_chars - head_len):])
+        capped = True
+    if not slimmed.endswith("\n"):
+        slimmed += "\n"
+    return slimmed, {"slim_in": in_chars, "slim_out": len(slimmed),
+                     "slim_dup_lines": dup_lines, "slim_capped": capped}
 
 
 def query_llm(prompt, model, temp, num_ctx, num_predict, url, keep_alive, timeout):
@@ -602,7 +656,15 @@ def redact(text, cfg, strict=False, no_compact=False):
     return text, applied, stats
 
 
-def summarize(applied, stats):
+def slim_suffix(sinfo):
+    if not sinfo:
+        return ""
+    pct = round((1 - sinfo["slim_out"] / max(1, sinfo["slim_in"])) * 100)
+    return " · slim −%d%% (%s→%s tok)" % (
+        pct, tok_fmt(sinfo["slim_in"]), tok_fmt(sinfo["slim_out"]))
+
+
+def summarize(applied, stats, sinfo=None):
     counts = {}
     for a in applied:
         counts[a["label"]] = counts.get(a["label"], 0) + 1
@@ -618,14 +680,15 @@ def summarize(applied, stats):
     stage_part = (" · " + hits) if hits else ""
     if not applied:
         summary = "clean (nothing redacted)"
-        footer = "[paste-redact · clean · %.1fs%s]" % (total, comp)
+        footer = "[paste-redact · clean · %.1fs%s%s]" % (total, comp, slim_suffix(sinfo))
     else:
         labels = ", ".join(sorted(counts))
         summary = "%d replacement%s (%s)" % (
             len(applied), "" if len(applied) == 1 else "s",
             ", ".join("%s x%d" % (k, v) for k, v in sorted(counts.items())))
-        footer = "[paste-redact · %d× redacted: %s · %s · %.1fs%s%s]" % (
-            len(applied), labels, li.get("model", "?"), total, comp, stage_part)
+        footer = "[paste-redact · %d× redacted: %s · %s · %.1fs%s%s%s]" % (
+            len(applied), labels, li.get("model", "?"), total, comp, stage_part,
+            slim_suffix(sinfo))
     return summary, footer, counts
 
 
@@ -674,7 +737,7 @@ def build_meta(redacted, applied):
     return meta
 
 
-def render_preview(cur_text, meta, reverted, summary, stats):
+def render_preview(cur_text, meta, reverted, summary, stats, sinfo=None):
     print("%s%spaste-redact Vorschau · %s%s" % (BOLD, CYAN, summary, RST))
     print("=" * 64)
     print(highlight(cur_text).rstrip("\n"))
@@ -710,6 +773,10 @@ def render_preview(cur_text, meta, reverted, summary, stats):
         parts.append("2. Meinung")
     if li.get("micro_queries"):
         parts.append("%d Micro" % li["micro_queries"])
+    if sinfo is not None:
+        parts.append("Slim %d→%d (−%d%%)" % (
+            sinfo["slim_in"], sinfo["slim_out"],
+            round((1 - sinfo["slim_out"] / max(1, sinfo["slim_in"])) * 100)))
     print("%sStats: %s%s" % (DIM, " · ".join(parts), RST))
 
 
@@ -727,6 +794,7 @@ def _run_preview_ui(raw, cfg, strict=False, no_compact=False):
         print("paste-redact: empty input", file=sys.stderr)
         return None, [], {"timings": {}}, 1
     last = (normalized, [], {"timings": {}, "llm": {"model": cfg["model"]}}, 0)
+    slim_on = False
     for rnd in (1, 2, 3):
         redacted, applied, stats = redact(raw, cfg, strict, no_compact)
         meta = build_meta(redacted, applied)
@@ -734,22 +802,28 @@ def _run_preview_ui(raw, cfg, strict=False, no_compact=False):
         while True:
             active = [m for m in meta if m["n"] not in reverted]
             cur = apply_reverts(redacted, meta, reverted)
+            sinfo = None
+            if slim_on:
+                cur, sinfo = slim_text(cur, cfg)
             summary, footer, _c = summarize(
-                [{"label": m["label"]} for m in active], stats)
+                [{"label": m["label"]} for m in active], stats, sinfo)
             if reverted:
                 footer += " · %d Stelle(n) freigegeben" % len(reverted)
-            render_preview(cur, meta, reverted, summary, stats)
+            render_preview(cur, meta, reverted, summary, stats, sinfo)
             last = (cur, [{"label": m["label"], "tag": m["tag"], "stage": m["stage"]}
                           for m in active], stats, 0)
             choice = prompt_tty("[↵] Passt   [1] #1 frei   [1a] #1 alle gleich   "
-                                "[1t] #1 alle vom Typ   [o] Original   [u] ohne Kompr.   "
-                                "[r] Retry   [q] Abbruch: ")
+                                "[1t] #1 alle vom Typ   [k] Kompakt   [o] Original   "
+                                "[u] ohne Kompr.   [r] Retry   [q] Abbruch: ")
             if choice in ("", "y", "j", "p"):
                 if reverted:
                     print("paste-redact: " + footer, file=sys.stderr)
                 return cur, last[1], stats, 0
             if choice == "o":
                 return normalized, [], stats, 3
+            if choice == "k":
+                slim_on = not slim_on
+                continue
             if choice == "u":
                 no_compact = True
                 break
@@ -783,7 +857,7 @@ def _run_preview_ui(raw, cfg, strict=False, no_compact=False):
                 continue
             if choice == "q":
                 return None, last[1], stats, 2
-            print("Format: <Nummer>[a|t], z.B. 1, 1a, 1t - oder o, u, r, q, Enter",
+            print("Format: <Nummer>[a|t], z.B. 1, 1a, 1t - oder k, o, u, r, q, Enter",
                   file=sys.stderr)
     cur, appl, stats, _rc = last
     return cur, appl, stats, 0
@@ -814,15 +888,28 @@ def run_selftest(cfg):
         assert vetoed(h), h
     for s in ("Sommer2024!feld", "ghp_9f8e7d6c5b4a32109f8e", "My.Secret"):
         assert not vetoed(s), s
-    # ticket/order references are intentionally NOT vetoed (user wants them
-    # flagged - one keypress reverts them, a missed reference is worse)
+    # ticket/order references are intentionally vetoed (user: pure noise)
     for t in ("Ticket#732285", "WNC-20237597", "Issue#123"):
-        assert not vetoed(t), t
-    print("PASS veto (hostnames/IPs blocked, passwords/tickets pass)")
+        assert vetoed(t), t
+    print("PASS veto (hostnames/IPs/tickets blocked, passwords pass)")
     # first shell prompt keeps machine context once, later ones collapse
     n = normalize("[michi@hp835 ~]$ echo hi\n[michi@hp835 ~]$ echo yo\n")
     assert n.startswith("[michi@hp835 ~]$ echo hi\n$ echo yo"), repr(n)
     print("PASS normalize (first prompt verbatim)")
+    # slim output compaction (pure function)
+    t = ("error: connection timeout after 30s retrying host db-01\n" * 3
+         + "}\n" * 3 + "\n\n\n" + "unique line here ok\n")
+    s, info = slim_text(t, cfg)
+    assert info["slim_dup_lines"] == 2, info
+    assert s.count("}") == 3, repr(s)  # short structural lines survive
+    assert "\n\n\n" not in s and "unique line here ok" in s
+    s2, info2 = slim_text("x" * 25000, cfg)
+    assert info2["slim_capped"] and "gekürzt" in s2, info2
+    fz = ("backup job 1 finished in 12s ok\n" * 1 + "backup job 2 finished in 34s ok\n"
+          + "short\n")
+    sf, infof = slim_text(fz, cfg)
+    assert infof["slim_dup_lines"] == 1 and "job 1" in sf, (sf, infof)
+    print("PASS slim (dup-fold, blanks, cap)")
     testdir = os.path.join(CFG_DIR, "tests")
     ok = True
     for name, expected in SELFTEST_CASES:
@@ -843,11 +930,12 @@ def main():
     args = sys.argv[1:]
     strict = "--strict" in args
     no_compact = "--no-compact" in args
+    want_slim = "--slim" in args
     want_stats = "--stats" in args or "--auto" in args
     want_preview = "--preview" in args
     want_selftest = "--selftest" in args
     args = [a for a in args if a not in ("--strict", "--auto", "--preview", "--stats",
-                                         "--selftest", "--no-compact")]
+                                         "--selftest", "--no-compact", "--slim")]
     cfg = load_config()
 
     if want_selftest:
@@ -886,7 +974,11 @@ def main():
         sys.exit(rc)
 
     redacted, applied, stats = redact(raw, cfg, strict, no_compact)
-    summary, footer, _counts = summarize(applied, stats)
+    sinfo = None
+    if want_slim:
+        redacted, sinfo = slim_text(redacted, cfg)
+        stats["slim"] = sinfo
+    summary, footer, _counts = summarize(applied, stats, sinfo)
     out = redacted + ("\n" + footer + "\n" if want_stats and redacted else (footer + "\n" if want_stats else ""))
 
     if preview_out:
