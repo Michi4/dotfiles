@@ -33,9 +33,14 @@ if [ "$MODE" = auto ]; then
 fi
 
 # preview: engine shows color UI on /dev/tty, prints final text to stdout
-if "$ENGINE" --preview --report "$OUT.report.json" < "$IN" > "$OUT.redacted.txt"; then
+"$ENGINE" --preview --report "$OUT.report.json" < "$IN" > "$OUT.redacted.txt"
+RC=$?
+if [ $RC -eq 0 ]; then
   wl-copy < "$OUT.redacted.txt"
   notify-send "paste-redact" "$(summary_of) - übernommen" 2>/dev/null
+elif [ $RC -eq 3 ]; then
+  wl-copy < "$OUT.redacted.txt"
+  notify-send "paste-redact" "Original (ohne Redaction) übernommen" 2>/dev/null
 else
   notify-send "paste-redact" "Abgebrochen - Clipboard unverändert" 2>/dev/null
 fi
