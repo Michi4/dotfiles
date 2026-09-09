@@ -153,6 +153,10 @@ BUILTIN_PATTERNS = [
     ("slack-token", r"\bxox[baprs]-[A-Za-z0-9\-]{10,}\b"),
     ("openai-key", r"\bsk-[A-Za-z0-9]{20,}\b"),
     ("anthropic-key", r"\bsk-ant-[A-Za-z0-9\-]{10,}\b"),
+    # ticket/order refs: flagged deterministically (user reverts with 1a -
+    # a missed internal ID is worse than a one-keypress FP)
+    ("ticket-number", r"\b[A-Za-z]+#\d+\b"),
+    ("ticket-number", r"\b[A-Z]{2,10}-\d{2,}\b"),
 ]
 
 
@@ -242,9 +246,6 @@ CONTAINS_VETO_RX = [
 ]
 # cert subject/issuer attributes are output, never pasted secrets
 VETO_RX.append(re.compile(r"^(?:CN|OU|O|L|ST|C|DC|SN|GN|emailAddress)=.*"))
-# ticket/order references are not credentials either (support workflow)
-VETO_RX.append(re.compile(r"^[A-Za-z]+#\d+$"))       # Ticket#732285
-VETO_RX.append(re.compile(r"^[A-Z]{2,10}-\d{2,}$"))  # WNC-20237597 (JIRA-style)
 
 
 def vetoed(secret):
@@ -378,10 +379,16 @@ def stage_llm(text, taken, cfg, strict, llm_stats, second=False, no_compact=Fals
         prompt_tmpl = LLM_PROMPT_STRICT
         model = cfg["model"]
         base_temp = cfg.get("temperature", 0.2) + 0.2
-    else:
-        prompt_tmpl = LLM_PROMPT_STRICT if strict else LLM_PROMPT
+    elif strict or cfg.get("auto_aggressive", True):
+        # recall-first: aggressive prompt everywhere (FPs are one keypress
+        # away in preview); --strict additionally escalates the model
+        prompt_tmpl = LLM_PROMPT_STRICT
         model = cfg["strict_model"] if strict else cfg["model"]
         base_temp = cfg["strict_temperature"] if strict else cfg["temperature"]
+    else:
+        prompt_tmpl = LLM_PROMPT
+        model = cfg["model"]
+        base_temp = cfg.get("temperature", 0.2)
     compacted, cinfo = compact_for_llm(text, cfg, no_compact)
     llm_stats.update(cinfo)
     # long inputs: split into focused chunks, queried in parallel (small models
@@ -600,16 +607,25 @@ def summarize(applied, stats):
     for a in applied:
         counts[a["label"]] = counts.get(a["label"], 0) + 1
     total = stats["timings"].get("total", 0.0)
+    li = stats.get("llm", {})
+    inp, outc = li.get("input_chars", 0), li.get("compact_chars", 0)
+    comp = (" · llm-input %d→%d (−%d%%)" % (inp, outc, round((1 - outc / inp) * 100))
+            if inp else "")
+    stages = stats.get("stages", {})
+    names = {"regex": "regex", "gitleaks": "gitleaks", "llm": "llm",
+             "llm2": "llm2", "llm-micro": "micro"}
+    hits = "+".join("%s%d" % (names.get(k, k), v) for k, v in stages.items() if v)
+    stage_part = (" · " + hits) if hits else ""
     if not applied:
         summary = "clean (nothing redacted)"
-        footer = "[paste-redact · clean · %.1fs]" % total
+        footer = "[paste-redact · clean · %.1fs%s]" % (total, comp)
     else:
         labels = ", ".join(sorted(counts))
         summary = "%d replacement%s (%s)" % (
             len(applied), "" if len(applied) == 1 else "s",
             ", ".join("%s x%d" % (k, v) for k, v in sorted(counts.items())))
-        footer = "[paste-redact · %d× redacted: %s · %s · %.1fs]" % (
-            len(applied), labels, stats["llm"]["model"], total)
+        footer = "[paste-redact · %d× redacted: %s · %s · %.1fs%s%s]" % (
+            len(applied), labels, li.get("model", "?"), total, comp, stage_part)
     return summary, footer, counts
 
 
@@ -798,10 +814,11 @@ def run_selftest(cfg):
         assert vetoed(h), h
     for s in ("Sommer2024!feld", "ghp_9f8e7d6c5b4a32109f8e", "My.Secret"):
         assert not vetoed(s), s
-    # ticket/order references are not credentials either (support workflow)
+    # ticket/order references are intentionally NOT vetoed (user wants them
+    # flagged - one keypress reverts them, a missed reference is worse)
     for t in ("Ticket#732285", "WNC-20237597", "Issue#123"):
-        assert vetoed(t), t
-    print("PASS veto (hostnames/IPs/tickets blocked, passwords untouched)")
+        assert not vetoed(t), t
+    print("PASS veto (hostnames/IPs blocked, passwords/tickets pass)")
     # first shell prompt keeps machine context once, later ones collapse
     n = normalize("[michi@hp835 ~]$ echo hi\n[michi@hp835 ~]$ echo yo\n")
     assert n.startswith("[michi@hp835 ~]$ echo hi\n$ echo yo"), repr(n)

@@ -14,5 +14,6 @@
   "chunk_chars": 4000,
   "llm_second_pass": true,
   "max_occurrences": 10,
-  "llm_micro_focus": true
+  "llm_micro_focus": true,
+  "auto_aggressive": false
 }
