@@ -7,5 +7,12 @@
   "strict_temperature": 0.4,
   "keep_alive": "15m",
   "request_timeout": 150,
-  "strict_model": "qwen2.5:3b"
+  "strict_model": "qwen2.5:3b",
+  "max_input_chars": 8000,
+  "ctx_headroom": 256,
+  "ctx_max": 8192,
+  "chunk_chars": 4000,
+  "llm_second_pass": true,
+  "max_occurrences": 10,
+  "llm_micro_focus": true
 }

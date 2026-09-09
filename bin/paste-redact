@@ -39,6 +39,7 @@ SELFTEST_CASES = [
     ("case2_prose_tokens.txt", 2),
     ("case3_key_urlcreds.txt", 2),
     ("case4_fastfetch_negative.txt", 0),
+    ("case5_two_prose_passwords.txt", 2),
 ]
 
 
@@ -204,11 +205,20 @@ VETO_RX = [
     re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}(/\d{1,2})?$"),          # IPv4 + CIDR
     re.compile(r"^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$"),        # MAC
     re.compile(r"^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$"),            # SHA-1 / SHA-256
+    re.compile(r"^\d+$"),                                         # bare numbers (log noise, never redact)
 ]
 
 
 def vetoed(secret):
-    return any(rx.match(secret.strip()) for rx in VETO_RX)
+    s = secret.strip()
+    if s.lower() in VETO_WORDS:
+        return True
+    return any(rx.match(s) for rx in VETO_RX)
+
+
+# literal meta-words the model sometimes "quotes" instead of real secrets
+VETO_WORDS = {"token", "password", "passwort", "secret", "geheimnis", "key",
+              "schlüssel", "schluessel", "kennwort", "hidden", "redacted", "pwd"}
 
 
 def secret_candidates(secret):
@@ -222,42 +232,161 @@ def secret_candidates(secret):
     return cands
 
 
-def stage_llm(text, taken, cfg, strict, llm_stats):
-    model = cfg["strict_model"] if strict else cfg["model"]
-    prompt_tmpl = LLM_PROMPT_STRICT if strict else LLM_PROMPT
-    base_temp = cfg["strict_temperature"] if strict else cfg["temperature"]
-    spans = None
+# Lines looking like they talk about credentials are never dropped by compaction
+# (prose passwords hide there) - they get priority when the input is over budget.
+SUSPICIOUS_RX = re.compile(
+    r"password|passwd|pwd|passwort|secret|geheim|token|api[-_ ]?key|auth|credential|"
+    r"bearer|private[-_ ]?key|zugang",
+    re.IGNORECASE)
+
+
+def compact_for_llm(text, cfg):
+    """Shrink text for the LLM prompt without losing recall.
+
+    Deterministic stages always run on the FULL text; the LLM only needs one
+    sighting of each distinct line, so global duplicate lines are dropped and
+    very long inputs are middle-truncated. Findings are re-matched against the
+    full text afterwards (all occurrences get redacted).
+    Returns (compacted, info dict).
+    """
+    text = TAG_RX.sub("[hidden]", text)  # already handled: don't let the model fixate on tags
+    orig_chars = len(text)
+    lines = text.split("\n")
+    seen = set()
+    kept = []
+    dup_lines = 0
+    for line in lines:
+        s = line.strip()
+        if not s:
+            if kept and kept[-1] != "":
+                kept.append("")
+            continue
+        if s in seen:
+            dup_lines += 1
+            continue
+        seen.add(s)
+        kept.append(line)
+    compacted = "\n".join(kept)
+    truncated = False
+    omitted = 0
+    max_chars = cfg.get("max_input_chars", 8000)
+    if len(compacted) > max_chars:
+        # over budget: keyword-bearing lines first (prose secrets hide there),
+        # then head/tail of the rest. Order may shuffle - matching runs on full text.
+        n = len(kept)
+        is_kw = [bool(SUSPICIOUS_RX.search(line)) for line in kept]
+        rest = [i for i in range(n) if not is_kw[i]]
+        order = [i for i in range(n) if is_kw[i]] + rest
+        parts, used, dropped = [], 0, 0
+        for i in order:
+            line = kept[i]
+            if used + len(line) + 1 <= max_chars:
+                parts.append(line)
+                used += len(line) + 1
+            else:
+                dropped += 1
+        omitted = len(compacted) - used
+        compacted = ("\n".join(parts)
+                     + "\n[... %d chars / %d lines omitted ...]\n" % (omitted, dropped))
+        truncated = True
+    info = {"input_chars": orig_chars, "compact_chars": len(compacted),
+            "dup_lines_removed": dup_lines, "truncated": truncated,
+            "omitted_chars": omitted}
+    return compacted, info
+
+
+def ctx_for(prompt_chars, cfg):
+    """Context size with guaranteed headroom: prompt estimate + prediction + reserve."""
+    est_tokens = prompt_chars // 3  # conservative chars-per-token for pastes
+    want = est_tokens + cfg.get("num_predict", 300) + cfg.get("ctx_headroom", 256)
+    want = max(1024, min(cfg.get("ctx_max", 8192), want))
+    return (want + 255) // 256 * 256  # round up to 256
+
+
+def query_llm(prompt, model, temp, num_ctx, num_predict, url, keep_alive, timeout):
+    """Single /api/generate call. Returns parsed spans list or raises."""
+    body = json.dumps({
+        "model": model,
+        "prompt": prompt,
+        "stream": False, "format": "json", "keep_alive": keep_alive,
+        "options": {"temperature": temp, "num_ctx": num_ctx, "num_predict": num_predict},
+    }).encode()
+    req = urllib.request.Request(url + "/api/generate", data=body,
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        resp = json.loads(r.read().decode())["response"]
+    spans = json.loads(resp)
+    if isinstance(spans, dict):
+        spans = [spans] if "secret" in spans else spans.get("secrets", spans.get("findings", []))
+    return spans if isinstance(spans, list) else []
+
+
+def stage_llm(text, taken, cfg, strict, llm_stats, second=False):
+    if second:  # second opinion: aggressive prompt, same fast model, warmer temp
+        prompt_tmpl = LLM_PROMPT_STRICT
+        model = cfg["model"]
+        base_temp = cfg.get("temperature", 0.2) + 0.2
+    else:
+        prompt_tmpl = LLM_PROMPT_STRICT if strict else LLM_PROMPT
+        model = cfg["strict_model"] if strict else cfg["model"]
+        base_temp = cfg["strict_temperature"] if strict else cfg["temperature"]
+    compacted, cinfo = compact_for_llm(text, cfg)
+    llm_stats.update(cinfo)
+    # long inputs: split into focused chunks, queried in parallel (small models
+    # lose recall in long noise). Normal pastes stay a single call.
+    chunk_chars = cfg.get("chunk_chars", 4000)
+    clines = compacted.split("\n")
+    chunks, cur = [], []
+    cur_len = 0
+    for line in clines:
+        if cur and cur_len + len(line) + 1 > chunk_chars:
+            chunks.append("\n".join(cur))
+            cur, cur_len = [], 0
+        cur.append(line)
+        cur_len += len(line) + 1
+    if cur:
+        chunks.append("\n".join(cur))
+    llm_stats["chunks"] = len(chunks)
+    prompts = [prompt_tmpl.replace("<<<TEXT>>>", c) for c in chunks]
+    num_ctx = ctx_for(max(len(p) for p in prompts), cfg)
+    llm_stats["num_ctx"] = num_ctx
+    spans = []
     attempts = 0
-    for attempt in range(2):  # one retry with higher temperature
-        attempts = attempt + 1
-        body = json.dumps({
-            "model": model,
-            "prompt": prompt_tmpl.replace("<<<TEXT>>>", text),
-            "stream": False, "format": "json", "keep_alive": cfg.get("keep_alive", "15m"),
-            "options": {"temperature": base_temp + 0.2 * attempt,
-                        "num_ctx": min(4096, 768 + len(text)),
-                        "num_predict": cfg["num_predict"]},
-        }).encode()
-        req = urllib.request.Request(cfg["ollama_url"] + "/api/generate", data=body,
-                                     headers={"Content-Type": "application/json"})
-        try:
-            with urllib.request.urlopen(req, timeout=cfg.get("request_timeout", 150)) as r:
-                resp = json.loads(r.read().decode())["response"]
-            spans = json.loads(resp)
-            break
-        except Exception as ex:
-            print("llm attempt %d failed (%s)" % (attempts, ex), file=sys.stderr)
+    failed = False
+
+    def run_one(prompt):
+        for attempt in range(2):  # one retry with higher temperature
+            try:
+                return query_llm(prompt, model, base_temp + 0.2 * attempt, num_ctx,
+                                 cfg["num_predict"], cfg["ollama_url"],
+                                 cfg.get("keep_alive", "15m"), cfg.get("request_timeout", 150)), attempt + 1
+            except Exception as ex:
+                print("llm attempt %d failed (%s)" % (attempt + 1, ex), file=sys.stderr)
+        return None, 2
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(prompts))) as ex:
+        results = list(ex.map(run_one, prompts))
+    for res, att in results:
+        attempts = max(attempts, att)
+        if res is None:
+            failed = True
+        else:
+            spans += res
     llm_stats["attempts"] = attempts
     llm_stats["model"] = model
-    if spans is None:
+    if failed and not spans:
         print("llm stage failed - continuing with deterministic results", file=sys.stderr)
         llm_stats["failed"] = True
         return []
-    if isinstance(spans, dict):
-        spans = [spans] if "secret" in spans else spans.get("secrets", spans.get("findings", []))
-    if not isinstance(spans, list):
-        return []
+    if failed:
+        llm_stats["failed"] = True
+    return match_spans(spans, text, taken, cfg, llm_stats)
+
+
+def match_spans(spans, text, taken, cfg, llm_stats):
+    """Match LLM-returned secrets against the full text. Returns repls list."""
     repls = []
+    max_occ = cfg.get("max_occurrences", 10)
     for item in spans:
         if not isinstance(item, dict):
             continue
@@ -269,8 +398,9 @@ def stage_llm(text, taken, cfg, strict, llm_stats):
             continue
         matched = False
         for cand in secret_candidates(secret):
-            if len(cand) < 3:
+            if len(cand) < 3 or vetoed(cand):
                 continue
+            hits = []
             idx = 0
             while True:
                 idx = text.find(cand, idx)
@@ -278,12 +408,20 @@ def stage_llm(text, taken, cfg, strict, llm_stats):
                     break
                 e = idx + len(cand)
                 if not overlapping(taken, idx, e):
-                    repls.append((idx, e, str(label)))
-                    taken.append((idx, e))
-                    matched = True
+                    hits.append((idx, e))
                 idx += 1
-            if matched:
+            if not hits:
+                continue
+            if len(hits) > max_occ:
+                # a "secret" occurring that often is log noise, not a secret
+                llm_stats.setdefault("capped", []).append(cand[:60])
+                matched = True
                 break
+            for idx, e in hits:
+                repls.append((idx, e, str(label)))
+                taken.append((idx, e))
+            matched = True
+            break
         if not matched:
             llm_stats["unmatched"].append(secret[:60])
     return dedupe(repls)
@@ -327,8 +465,78 @@ def redact(text, cfg, strict=False):
 
     l_repls = [(s, e, lb) for s, e, lb in l_repls if not overlapping(taken, s, e)]
     text, l_applied = apply_all(text, l_repls, "llm")
+    taken = tag_spans(text)
     applied += l_applied
     stats["stages"]["llm"] = len(l_applied)
+    stats["llm"]["passes"] = 1
+
+    # second opinion: secrets were found AND untagged lines still talk about
+    # credentials (small models drop findings when several secrets are present).
+    # Full re-scan only pays off for single-chunk inputs; big inputs get the
+    # cheaper micro-focus below instead.
+    if (cfg.get("llm_second_pass", True) and stats["llm"].get("chunks", 1) == 1
+            and (c_applied or g_applied or l_applied)):
+        untagged = "\n".join(l for l in text.split("\n") if "[REDACTED_" not in l)
+        if SUSPICIOUS_RX.search(untagged):
+            t0 = time.perf_counter()
+            l2 = stage_llm(text, list(taken), cfg, strict, stats["llm"], second=True)
+            stats["timings"]["llm_pass2"] = time.perf_counter() - t0
+            l2 = [(s, e, lb) for s, e, lb in l2 if not overlapping(taken, s, e)]
+            text, l2_applied = apply_all(text, l2, "llm2")
+            applied += l2_applied
+            stats["stages"]["llm2"] = len(l2_applied)
+            stats["llm"]["passes"] = 2
+
+    # micro-focus: lines with MORE credential keywords than already-redacted
+    # tags get their own tiny query each (measured: the model reliably flags a
+    # secret in isolation that it drops inside long noise - including a second
+    # secret sharing a line with the first). Handled spans are blanked (tags
+    # get echoed, placeholder words get flagged - empty masks neither).
+    # Capped, parallel, cheap.
+    if cfg.get("llm_micro_focus", True):
+        fulllines = text.split("\n")
+        targets = []
+        for i, l in enumerate(fulllines):
+            stripped = TAG_RX.sub("", l)  # ignore keywords inside tags (BEARER/TOKEN/...)
+            if len(SUSPICIOUS_RX.findall(stripped)) > len(TAG_RX.findall(l)):
+                targets.append(i)
+        targets = targets[:10]
+        if targets:
+            t0 = time.perf_counter()
+            blanked = TAG_RX.sub("[hidden]", text).split("\n")
+            micro_prompts = []
+            for i in targets:
+                win = blanked[max(0, i - 1):i + 2]
+                micro_prompts.append(LLM_PROMPT_STRICT.replace("<<<TEXT>>>", "\n".join(win)))
+            m_ctx = ctx_for(max(len(p) for p in micro_prompts), cfg)
+            model = cfg["model"]
+
+            def run_micro(prompt):
+                try:
+                    return query_llm(prompt, model, cfg.get("temperature", 0.2) + 0.1, m_ctx,
+                                     cfg["num_predict"], cfg["ollama_url"],
+                                     cfg.get("keep_alive", "15m"),
+                                     cfg.get("request_timeout", 150))
+                except Exception as ex:
+                    print("llm micro query failed (%s)" % ex, file=sys.stderr)
+                    return []
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(micro_prompts))) as ex:
+                m_results = list(ex.map(run_micro, micro_prompts))
+            m_spans = []
+            for r in m_results:
+                if isinstance(r, list):
+                    m_spans += r
+            stats["llm"]["micro_queries"] = len(micro_prompts)
+            taken = tag_spans(text)  # refresh: pass-2 tags included
+            # NOTE: no post-filter here - match_spans already validated each
+            # span against taken (filtering again would self-overlap and drop all)
+            m_repls = match_spans(m_spans, text, taken, cfg, stats["llm"])
+            text, m_applied = apply_all(text, m_repls, "llm-micro")
+            taken = tag_spans(text)
+            applied += m_applied
+            stats["stages"]["llm-micro"] = len(m_applied)
+            stats["timings"]["llm_micro"] = time.perf_counter() - t0
 
     stats["timings"]["total"] = time.perf_counter() - t_all
     return text, applied, stats
@@ -383,8 +591,13 @@ def _run_preview_ui(raw, cfg, strict=False):
         redacted, applied, stats = redact(raw, cfg, strict)
         summary, _footer, _counts = summarize(applied, stats)
         print("%s%spaste-redact Vorschau · Runde %d · %s%s" % (BOLD, CYAN, rnd, summary, RST))
-        print("%s[%d Fundstellen, %.1fs, %s]%s" % (
-            DIM, len(applied), stats["timings"].get("total", 0), stats["llm"]["model"], RST))
+        li = stats["llm"]
+        saved = 1 - li.get("compact_chars", 1) / max(1, li.get("input_chars", 1))
+        compact_note = (" · LLM-Input −%d%%" % round(saved * 100)) if saved > 0.05 else ""
+        trunc_note = " · gekürzt" if li.get("truncated") else ""
+        print("%s[%d Fundstellen, %.1fs, %s, ctx %d%s%s]%s" % (
+            DIM, len(applied), stats["timings"].get("total", 0), li["model"],
+            li.get("num_ctx", 0), compact_note, trunc_note, RST))
         print("=" * 64, file=sys.stderr)
         print(highlight(redacted).rstrip("\n"))
         print("=" * 64, file=sys.stderr)
@@ -409,6 +622,22 @@ def run_selftest(cfg):
     cfg = dict(cfg)
     cfg["temperature"] = 0.0  # deterministic: tests must not flake
     cfg["strict_temperature"] = 0.0
+    # pure compaction checks (no LLM involved)
+    dup = "line A\nline B\nline A\n\n\nline B\nline C\n"
+    comp, info = compact_for_llm(dup, cfg)
+    assert comp == "line A\nline B\n\nline C\n", repr(comp)
+    assert info["dup_lines_removed"] == 2, info
+    big = "secret BerrySecret123!\n" + "".join("noise filler line %d abcdef\n" % i for i in range(3000))
+    comp, info = compact_for_llm(big, cfg)
+    assert info["truncated"] and "omitted" in comp, info
+    assert "secret BerrySecret123!" in comp  # head survives truncation
+    # keyword line buried in the middle must survive (prose-secret recall)
+    mid = "".join("filler %d\n" % i for i in range(500))
+    mid += "the backup password is HiddenMid77!\n"
+    mid += "".join("filler %d\n" % i for i in range(500, 1500))
+    comp, info = compact_for_llm(mid, cfg)
+    assert info["truncated"] and "HiddenMid77" in comp, info
+    print("PASS compaction (dupes + truncation + keyword priority)")
     testdir = os.path.join(CFG_DIR, "tests")
     ok = True
     for name, expected in SELFTEST_CASES:
