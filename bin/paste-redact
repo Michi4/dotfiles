@@ -838,8 +838,7 @@ def main():
     out = redacted + ("\n" + footer + "\n" if want_stats and redacted else (footer + "\n" if want_stats else ""))
 
     if preview_out:
-        with open(preview_out + ".redacted.txt", "w") as f:
-            f.write(redacted)
+        write_private(preview_out + ".redacted.txt", redacted)
         write_report_json(preview_out + ".report.json", summary, footer, applied, stats)
         print(preview_out, flush=True)
     else:
@@ -849,13 +848,23 @@ def main():
     print("paste-redact: " + summary, file=sys.stderr)
 
 
+def write_private(path, data):
+    """Write files that may contain secrets with 0600 (no group/other read)."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(data)
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 def write_report_json(path, summary, footer, applied, stats):
-    with open(path, "w") as f:
-        json.dump({"summary": summary, "footer": footer, "count": len(applied),
+    write_private(path, json.dumps({"summary": summary, "footer": footer, "count": len(applied),
                    "replacements": [{"label": a["label"], "tag": a["tag"], "stage": a["stage"],
                                       "original": a.get("original", "")[:200]}
                                     for a in applied],
-                   "stats": stats}, f)
+                   "stats": stats}))
 
 
 if __name__ == "__main__":
