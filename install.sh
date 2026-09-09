@@ -205,6 +205,12 @@ if command -v ollama &>/dev/null; then
     ollama pull qwen2.5:3b
 fi
 
+# VPN split-DNS (public via global resolvers, apronix.net via tunnel).
+# Needs 2 lines in ~/.openvpn/bwh.conf (root-owned, add manually once):
+#   script-security 2
+#   dns-updown /home/michi/.config/openvpn/dns-updown-split.sh
+link .config/openvpn/dns-updown-split.sh
+
 # VS Code
 link .config/Code/User/settings.json
 
