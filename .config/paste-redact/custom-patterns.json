@@ -18,5 +18,15 @@
     "name": "BEARER-JWT",
     "group": 0,
     "pattern": "(?i)bearer\\s+[A-Za-z0-9\\-_]+\\.[A-Za-z0-9\\-_]+\\.[A-Za-z0-9\\-_]+"
+  },
+  {
+    "name": "PHP-DEFINE",
+    "group": 1,
+    "pattern": "(?i)define\\s*\\(\\s*['\\\"](?:pass(?=[_'\\\"]|$)|[^'\\\"]*(?:password|passwd|pwd|passwort|secret|token|credential|auth|[_-]pass(?=[_'\\\"]|$))[^'\\\"]*)['\\\"]\\s*,\\s*['\\\"]([^'\\\"]{3,})['\\\"]"
+  },
+  {
+    "name": "KEY-VALUE",
+    "group": 1,
+    "pattern": "(?i)['\\\"](?:pass(?=[_'\\\"]|$)|[^'\\\"]*(?:password|passwd|pwd|passwort|secret|token|credential|auth|[_-]pass(?=[_'\\\"]|$))[^'\\\"]*)['\\\"]\\s*(?:=>|:)\\s*['\\\"]([^'\\\"]{3,})['\\\"]"
   }
 ]

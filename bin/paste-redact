@@ -1005,7 +1005,16 @@ def run_selftest(cfg):
         print("%s %-28s expected %d, got %d (%.1fs)" % (
             "PASS" if good else "FAIL", name, expected, len(applied), dt))
     print("selftest: " + ("ALL PASS" if ok else "FAILURES"))
-    return 0 if ok else 1
+    if not ok:
+        return 1
+    # case6: deterministic PHP-DEFINE must hit (LLM extras tolerated - temp noise)
+    with open(os.path.join(testdir, "case6_php_define.txt")) as f:
+        raw = f.read()
+    _red, applied, _stats = redact(raw, cfg, strict=False)
+    assert any(a["label"] == "PHP-DEFINE" and a["original"] == "L6KJF843Lx"
+               for a in applied), applied
+    print("PASS case6_php_define.txt (PHP-DEFINE hit)")
+    return 0
 
 
 def main():

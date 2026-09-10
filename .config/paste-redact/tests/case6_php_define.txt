@@ -1,0 +1,3 @@
+<?php
+define('DB_HOST', 'localhost');
+define('DB_PASS','L6KJF843Lx');
