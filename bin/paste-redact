@@ -413,8 +413,37 @@ def slim_text(text, cfg):
                      "slim_dup_lines": dup_lines, "slim_capped": capped}
 
 
+def coerce_spans(obj):
+    if isinstance(obj, dict):
+        obj = [obj] if "secret" in obj else obj.get("secrets", obj.get("findings", []))
+    return obj if isinstance(obj, list) else []
+
+
+def extract_spans(resp):
+    """Parse model JSON output. Returns (spans, repaired_bool).
+    Raises ValueError if nothing usable. Handles markdown fences and
+    truncated arrays (num_predict cut) by salvaging complete items.
+    """
+    txt = resp.strip()
+    if txt.startswith("```"):
+        lines = txt.split("\n")
+        body = [l for l in lines[1:] if not l.strip().startswith("```")]
+        txt = "\n".join(body).strip()
+    try:
+        return coerce_spans(json.loads(txt)), False
+    except json.JSONDecodeError:
+        pass
+    idx = txt.rfind("},")
+    while idx > 0:
+        try:
+            return coerce_spans(json.loads(txt[:idx + 1] + "]")), True
+        except json.JSONDecodeError:
+            idx = txt.rfind("},", 0, idx)
+    raise ValueError("unparsable LLM output (%d chars)" % len(resp))
+
+
 def query_llm(prompt, model, temp, num_ctx, num_predict, url, keep_alive, timeout):
-    """Single /api/generate call. Returns parsed spans list or raises."""
+    """Single /api/generate call. Returns (spans, repaired) or raises."""
     body = json.dumps({
         "model": model,
         "prompt": prompt,
@@ -425,10 +454,7 @@ def query_llm(prompt, model, temp, num_ctx, num_predict, url, keep_alive, timeou
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         resp = json.loads(r.read().decode())["response"]
-    spans = json.loads(resp)
-    if isinstance(spans, dict):
-        spans = [spans] if "secret" in spans else spans.get("secrets", spans.get("findings", []))
-    return spans if isinstance(spans, list) else []
+    return extract_spans(resp)
 
 
 def stage_llm(text, taken, cfg, strict, llm_stats, second=False, no_compact=False):
@@ -471,19 +497,33 @@ def stage_llm(text, taken, cfg, strict, llm_stats, second=False, no_compact=Fals
     failed = False
 
     def run_one(prompt):
-        for attempt in range(2):  # one retry with higher temperature
+        base_np = cfg["num_predict"]
+        all_spans, repaired_any, attempts, errored = [], False, 0, False
+        # attempt 2 gets double room: truncation at the cap is the top failure
+        for np, temp in ((base_np, base_temp), (base_np * 2, base_temp + 0.2)):
+            attempts += 1
             try:
-                return query_llm(prompt, model, base_temp + 0.2 * attempt, num_ctx,
-                                 cfg["num_predict"], cfg["ollama_url"],
-                                 cfg.get("keep_alive", "15m"), cfg.get("request_timeout", 150)), attempt + 1
+                spans, repaired = query_llm(prompt, model, temp, num_ctx, np,
+                                            cfg["ollama_url"], cfg.get("keep_alive", "15m"),
+                                            cfg.get("request_timeout", 150))
             except Exception as ex:
-                print("llm attempt %d failed (%s)" % (attempt + 1, ex), file=sys.stderr)
-        return None, 2
+                print("llm attempt %d failed (%s)" % (attempts, ex), file=sys.stderr)
+                errored = True
+                continue
+            all_spans += spans
+            repaired_any = repaired_any or repaired
+            if not repaired:
+                break
+        if not all_spans and errored:
+            return None, attempts, repaired_any
+        return all_spans, attempts, repaired_any
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(prompts))) as ex:
         results = list(ex.map(run_one, prompts))
-    for res, att in results:
+    for res, att, rep in results:
         attempts = max(attempts, att)
+        if rep:
+            llm_stats["repaired"] = True
         if res is None:
             failed = True
         else:
@@ -547,7 +587,7 @@ def redact(text, cfg, strict=False, no_compact=False):
     """Returns (redacted_text, applied, stats). applied entries hold label/tag/stage/original."""
     stats = {"strict": strict, "stages": {}, "timings": {},
              "llm": {"attempts": 0, "model": cfg["strict_model"] if strict else cfg["model"],
-                     "failed": False, "unmatched": []}}
+                     "failed": False, "repaired": False, "unmatched": []}}
     t_all = time.perf_counter()
     text = normalize(text)
     if not text:
@@ -630,10 +670,11 @@ def redact(text, cfg, strict=False, no_compact=False):
 
             def run_micro(prompt):
                 try:
-                    return query_llm(prompt, model, cfg.get("temperature", 0.2) + 0.1, m_ctx,
-                                     cfg["num_predict"], cfg["ollama_url"],
-                                     cfg.get("keep_alive", "15m"),
-                                     cfg.get("request_timeout", 150))
+                    spans, _repaired = query_llm(prompt, model, cfg.get("temperature", 0.2) + 0.1,
+                                                 m_ctx, cfg["num_predict"], cfg["ollama_url"],
+                                                 cfg.get("keep_alive", "15m"),
+                                                 cfg.get("request_timeout", 150))
+                    return spans
                 except Exception as ex:
                     print("llm micro query failed (%s)" % ex, file=sys.stderr)
                     return []
@@ -679,7 +720,7 @@ def summarize(applied, stats, sinfo=None):
     stages = stats.get("stages", {})
     names = {"regex": "regex", "gitleaks": "gitleaks", "llm": "llm",
              "llm2": "llm2", "llm-micro": "micro"}
-    hits = "+".join("%s%d" % (names.get(k, k), v) for k, v in stages.items() if v)
+    hits = "+".join("%s:%d" % (names.get(k, k), v) for k, v in stages.items() if v)
     stage_part = (" · " + hits) if hits else ""
     if not applied:
         summary = "clean (nothing redacted)"
@@ -936,6 +977,21 @@ def run_selftest(cfg):
     sf, infof = slim_text(fz, cfg)
     assert infof["slim_dup_lines"] == 1 and "job 1" in sf, (sf, infof)
     print("PASS slim (dup-fold, blanks, cap)")
+    # JSON repair: fences, truncated arrays, garbage
+    good = '[{"secret": "abc123", "label": "x"}]'
+    assert extract_spans(good) == ([{"secret": "abc123", "label": "x"}], False)
+    fenced = '```json\n[{"secret": "abc123", "label": "x"}]\n```'
+    assert extract_spans(fenced)[0] == [{"secret": "abc123", "label": "x"}]
+    trunc = '[{"secret": "aaa111", "label": "x"}, {"secret": "bbb222", "label": "y"}, {"secret": "cc'
+    spans, repaired = extract_spans(trunc)
+    assert repaired and spans == [{"secret": "aaa111", "label": "x"},
+                                  {"secret": "bbb222", "label": "y"}], (spans, repaired)
+    try:
+        extract_spans("not json at all {{{")
+        raise SystemExit("repair should have raised")
+    except ValueError:
+        pass
+    print("PASS json-repair (fences, truncation, garbage)")
     testdir = os.path.join(CFG_DIR, "tests")
     ok = True
     for name, expected in SELFTEST_CASES:
