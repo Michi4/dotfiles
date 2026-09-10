@@ -117,6 +117,7 @@ bindsym $mod+Shift+t exec bash -c 'STATE_FILE=/tmp/sway_awake_state; CACHE=/tmp/
 exec --no-startup-id bash -c 'echo sunset > /tmp/gammastep_state; systemctl --user restart gammastep 2>/dev/null || (pkill -x gammastep 2>/dev/null; gammastep -m wayland & disown)'
 bindsym $mod+Shift+n exec ~/.config/sway/scripts/gammastep-3way.sh # 3-way night mode: sunset (auto 2500K) -> max (1000K) -> off -> sunset ... [default: sunset]
 bindsym $mod+Shift+b exec ~/.config/sway/scripts/auto-brightness.sh toggle  # auto-brightness on/off toggle
+bindsym $mod+Shift+d exec bash -c 'sudo /usr/bin/resolvectl flush-caches && notify-send "DNS" "Cache geflusht ($(date +%H:%M)) - frische Antworten ab jetzt"'  # DNS cache flush
 
 # This will lock your screen after 300 seconds of inactivity, then turn off
 # your displays after another 300 seconds, and turn your screens back on when
