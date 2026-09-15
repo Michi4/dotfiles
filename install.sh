@@ -146,6 +146,7 @@ info "Symlinking configs..."
 
 # Shell
 link .bashrc
+link .inputrc
 link .profile
 link .gitconfig
 link .npmrc

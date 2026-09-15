@@ -1,0 +1,20 @@
+# inherit system bindings (Ctrl+arrows word-jump, Del, etc.) — user bindings below override
+$include /etc/inputrc
+
+# Enable color output
+set colored-stats on
+
+# Show common prefix when completing, then cycle
+set menu-complete-display-prefix on
+
+# Case-insensitive completion
+set completion-ignore-case on
+
+# Show all matches if ambiguous
+set show-all-if-ambiguous on
+
+# Arrow keys: prefix-based history search
+"\e[A": history-search-backward
+"\e[B": history-search-forward
+
+
