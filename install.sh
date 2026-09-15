@@ -211,6 +211,12 @@ fi
 #   dns-updown /home/michi/.config/openvpn/dns-updown-split.sh
 link .config/openvpn/dns-updown-split.sh
 
+# adb inside VPN namespaces: wrapper hops to host netns so opencode-vpn sees devices
+install -Dm755 "$DOTFILES_DIR/bin/adb" "$HOME/.local/bin/adb"
+sudo install -m755 "$DOTFILES_DIR/bin/adb" /usr/local/bin/adb 2>/dev/null \
+    && echo "  installed: /usr/local/bin/adb (VPN-namespace hop)" \
+    || echo "  WARN: could not install /usr/local/bin/adb (VPN namespaces won't see adb devices)"
+
 # VS Code
 link .config/Code/User/settings.json
 

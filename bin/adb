@@ -1,0 +1,26 @@
+#!/bin/bash
+# adb wrapper: if inside a VPN netns (vpn*), adb must talk to host's adb server.
+# Host's adb listens on 127.0.0.1:5037, but each netns has isolated lo.
+# This wrapper detects vpn* netns and re-executes adb in host netns via nsenter.
+# Outside VPN it behaves exactly as normal adb.
+
+REAL_ADB="/usr/bin/adb"
+[ -x "$REAL_ADB" ] || REAL_ADB="$(command -v adb 2>/dev/null || echo /usr/bin/adb)"
+
+# detect if we are inside a vpn* netns
+if command -v ip >/dev/null 2>&1 && ip netns identify 2>/dev/null | grep -qE '^vpn[0-9]*$'; then
+  # we are inside vpn netns -> hop to host netns for the adb client.
+  # Use host's init netns (/proc/1/ns/net) which is the host's network.
+  # Preserve HOME and pass through all args.
+  # Need to be able to sudo without password for nsenter; try sudo -n, fallback to plain if already root.
+  if [ "$(id -u)" -eq 0 ]; then
+    exec nsenter --net=/proc/1/ns/net --no-fork "$REAL_ADB" "$@"
+  elif sudo -n true 2>/dev/null; then
+    exec sudo -n nsenter --net=/proc/1/ns/net --no-fork sudo -u "$USER" "$REAL_ADB" "$@"
+  else
+    # no sudo, try nsenter directly (may fail, but we try)
+    exec nsenter --net=/proc/1/ns/net --no-fork "$REAL_ADB" "$@"
+  fi
+else
+  exec "$REAL_ADB" "$@"
+fi
