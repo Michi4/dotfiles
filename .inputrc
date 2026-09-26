@@ -17,4 +17,7 @@ set show-all-if-ambiguous on
 "\e[A": history-search-backward
 "\e[B": history-search-forward
 
+# foot sends ^H for Ctrl+Backspace: kill whole word left (symmetric to Ctrl+Del)
+"\C-h": backward-kill-word
+
 
