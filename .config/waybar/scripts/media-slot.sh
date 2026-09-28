@@ -3,6 +3,32 @@ idx=${1:-0}
 cache="/tmp/waybar-media-cache-$idx.txt"
 state="/tmp/waybar-media-state"
 lock="/tmp/waybar-media.lock"
+
+# ---- Fast path: volume overlay (no playerctl, no lock, ~10ms) ----
+# media-volume.sh records "timestamp percent" in $volshow on scroll; while
+# fresh, show the volume centered in the last title width instead of the title.
+volshow="/tmp/waybar-media-volshow-$idx.txt"
+now_ts=$(date +%s)
+if [ -f "$volshow" ] && [ -f "$cache" ]; then
+  read -r vs_ts vs_pct < "$volshow" 2>/dev/null
+  if [ -n "$vs_ts" ] && [ $((now_ts - vs_ts)) -lt 2 ]; then
+    v0=" $vs_pct%"
+    { read -r _; read -r last_text; read -r last_tip; read -r last_cls; } < "$cache"
+    [ -n "$last_cls" ] || last_cls="Playing"
+    n=${#last_text}; m=${#v0}
+    if [ -n "$last_text" ] && [ "$m" -lt "$n" ]; then
+      pad=$((n - m)); left=$((pad / 2)); right=$((pad - left))
+      vtext="$(printf "%${left}s" '')$v0$(printf "%${right}s" '')"
+    else
+      vtext="$v0"
+    fi
+    [ -n "$last_tip" ] || last_tip="$v0"
+    echo "{\"text\":\"$vtext\",\"tooltip\":\"$last_tip\",\"class\":\"$last_cls\"}"
+    exit 0
+  else
+    rm -f "$volshow"
+  fi
+fi
 # ---- Dynamic media width budget (derived from screen size) ----
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -77,13 +103,13 @@ get_reserve_px() {
   echo $(( right + ws ))
 }
 
-# Budget is recomputed at most every few seconds and shared by all slots.
+# Budget is recomputed at most every 30s and shared by all slots.
 get_media_budget() {
   local width char_px reserve spare budget now cached_ts cached_val
   now=$(date +%s)
   if [ -f "$BUDGET_CACHE" ]; then
     read -r cached_ts cached_val < "$BUDGET_CACHE" 2>/dev/null
-    if [ -n "$cached_val" ] && [ $((now - ${cached_ts:-0})) -lt 5 ]; then
+    if [ -n "$cached_val" ] && [ $((now - ${cached_ts:-0})) -lt 30 ]; then
       echo "$cached_val"; return
     fi
   fi
@@ -239,41 +265,6 @@ done
 exec 9>&-
 
 # Build display text + tooltip
-# Volume overlay: right after scrolling on the module, show the player volume
-# (media-volume.sh drops a timestamp) instead of the track title.
-volshow="/tmp/waybar-media-volshow-$idx.txt"
-now_ts=$(date +%s)
-if [ -n "$player" ] && [ -n "$full_text" ] && [ -f "$volshow" ]; then
-  vs_ts=$(cat "$volshow" 2>/dev/null)
-  if [ -n "$vs_ts" ] && [ $((now_ts - vs_ts)) -lt 2 ]; then
-    vol=$(playerctl -p "$player" volume 2>/dev/null)
-    if [ -n "$vol" ]; then
-      pct=$(awk -v v="$vol" 'BEGIN{v=(v>1.0)?1.0:v; printf "%d", v*100+0.5}')
-      v0=" $pct%"
-      # Keep the module width stable: center the readout inside the exact
-      # width the title would use (same truncation, space-padded both sides).
-      ttext="$full_text"
-      if [ "$disp_len" -lt "${#ttext}" ]; then
-        ttext="${ttext:0:$((disp_len - 3))}..."
-      fi
-      n=${#ttext}; m=${#v0}
-      if [ "$m" -lt "$n" ]; then
-        pad=$((n - m)); left=$((pad / 2)); right=$((pad - left))
-        # shellcheck disable=SC2059
-        vtext="$(printf "%${left}s" '')$v0$(printf "%${right}s" '')"
-      else
-        vtext="$v0"
-      fi
-      vtip="$v0 · $full_text"
-      printf '%s\n' "$player" "$vtext" "$vtip" > "$cache"
-      echo "{\"text\":\"$vtext\",\"tooltip\":\"$vtip\",\"class\":\"$status\"}"
-      exit 0
-    fi
-  else
-    rm -f "$volshow"
-  fi
-fi
-
 # Show if Playing, or if Paused but we were already showing it (sticky).
 if [ -n "$player" ] && [ -n "$full_text" ]; then
   if [ "$status" = "Playing" ] || [ "$player" = "$cached_player" ]; then
@@ -283,7 +274,7 @@ if [ -n "$player" ] && [ -n "$full_text" ]; then
     fi
     tooltip="$text"
     [ -n "$album" ] && tooltip="$tooltip · $album"
-    printf '%s\n' "$player" "$text" "$tooltip" > "$cache"
+    printf '%s\n' "$player" "$text" "$tooltip" "$status" > "$cache"
     echo "{\"text\":\"$text\",\"tooltip\":\"$tooltip\",\"class\":\"$status\"}"
     exit 0
   fi

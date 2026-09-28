@@ -86,7 +86,7 @@
     "on-click": "~/.config/waybar/scripts/media-click.sh 0",
     "on-scroll-up": "~/.config/waybar/scripts/media-volume.sh 0 up",
     "on-scroll-down": "~/.config/waybar/scripts/media-volume.sh 0 down",
-    "interval": 2,
+    "interval": 5,
     "signal": 8,
     "cursor": true,
     "tooltip": true
@@ -98,8 +98,8 @@
     "on-click": "~/.config/waybar/scripts/media-click.sh 1",
     "on-scroll-up": "~/.config/waybar/scripts/media-volume.sh 1 up",
     "on-scroll-down": "~/.config/waybar/scripts/media-volume.sh 1 down",
-    "interval": 2,
-    "signal": 8,
+    "interval": 5,
+    "signal": 9,
     "cursor": true,
     "tooltip": true
   },
@@ -110,8 +110,8 @@
     "on-click": "~/.config/waybar/scripts/media-click.sh 2",
     "on-scroll-up": "~/.config/waybar/scripts/media-volume.sh 2 up",
     "on-scroll-down": "~/.config/waybar/scripts/media-volume.sh 2 down",
-    "interval": 2,
-    "signal": 8,
+    "interval": 5,
+    "signal": 10,
     "cursor": true,
     "tooltip": true
   },
@@ -122,8 +122,8 @@
     "on-click": "~/.config/waybar/scripts/media-click.sh 3",
     "on-scroll-up": "~/.config/waybar/scripts/media-volume.sh 3 up",
     "on-scroll-down": "~/.config/waybar/scripts/media-volume.sh 3 down",
-    "interval": 2,
-    "signal": 8,
+    "interval": 5,
+    "signal": 11,
     "cursor": true,
     "tooltip": true
   },
@@ -134,8 +134,8 @@
     "on-click": "~/.config/waybar/scripts/media-click.sh 4",
     "on-scroll-up": "~/.config/waybar/scripts/media-volume.sh 4 up",
     "on-scroll-down": "~/.config/waybar/scripts/media-volume.sh 4 down",
-    "interval": 2,
-    "signal": 8,
+    "interval": 5,
+    "signal": 12,
     "cursor": true,
     "tooltip": true
   },
@@ -146,8 +146,8 @@
     "on-click": "~/.config/waybar/scripts/media-click.sh 5",
     "on-scroll-up": "~/.config/waybar/scripts/media-volume.sh 5 up",
     "on-scroll-down": "~/.config/waybar/scripts/media-volume.sh 5 down",
-    "interval": 2,
-    "signal": 8,
+    "interval": 5,
+    "signal": 13,
     "cursor": true,
     "tooltip": true
   },

@@ -6,6 +6,7 @@ idx=${1:-0}
 dir=${2:-up}
 cache="/tmp/waybar-media-cache-$idx.txt"
 volshow="/tmp/waybar-media-volshow-$idx.txt"
+sig=$((8 + idx))
 
 [ -f "$cache" ] || exit 0
 player=$(sed -n '1p' "$cache")
@@ -18,9 +19,13 @@ else
   new=$(awk -v v="$vol" 'BEGIN{n=v-0.05; if(n<0)n=0; printf "%.4f", n}')
 fi
 playerctl -p "$player" volume "$new" 2>/dev/null || exit 0
+pct=$(awk -v v="$new" 'BEGIN{printf "%d", v*100+0.5}')
 
-# Tell media-slot.sh to show the volume instead of the title for a moment.
-date +%s > "$volshow"
+# Overlay "timestamp percent" for ~2s, then snap back to the title
+# (interval polls are too slow for that, so re-signal explicitly).
+now=$(date +%s)
+echo "$now $pct" > "$volshow"
 
-# Refresh the media modules immediately (they listen on SIGRTMIN+8).
-pkill -RTMIN+8 waybar 2>/dev/null || true
+# Refresh just this slot right now and again after the overlay expires.
+pkill -RTMIN+"$sig" waybar 2>/dev/null || true
+( sleep 2.3; pkill -RTMIN+"$sig" waybar 2>/dev/null ) >/dev/null 2>&1 &
