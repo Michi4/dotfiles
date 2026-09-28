@@ -25,9 +25,9 @@ while true; do
       album=$(escape "$(playerctl -p "$player" metadata album 2>/dev/null)")
       name=$(escape "$(playerctl -p "$player" metadata xesam:url 2>/dev/null | sed 's|https\?://||;s|www\.||;s|/.*||' || echo "$player")")
       if [ -n "$artist" ]; then
-        last_text["$player"]="♫ $artist - $title"
+        last_text["$player"]="$artist - $title"
       else
-        last_text["$player"]="♫ $title"
+        last_text["$player"]="$title"
       fi
       last_tooltip["$player"]="${last_text[$player]}"
       [ -n "$album" ] && last_tooltip["$player"]="${last_tooltip[$player]} · $album"

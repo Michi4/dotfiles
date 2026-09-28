@@ -192,9 +192,9 @@ if [ -n "$player" ]; then
     artist=$(escape "$artist")
     album=$(escape "$album")
     if [ -n "$artist" ]; then
-      full_text="♫ $artist - $title"
+      full_text="$artist - $title"
     else
-      full_text="♫ $title"
+      full_text="$title"
     fi
     full_len=${#full_text}
   fi
@@ -239,6 +239,41 @@ done
 exec 9>&-
 
 # Build display text + tooltip
+# Volume overlay: right after scrolling on the module, show the player volume
+# (media-volume.sh drops a timestamp) instead of the track title.
+volshow="/tmp/waybar-media-volshow-$idx.txt"
+now_ts=$(date +%s)
+if [ -n "$player" ] && [ -n "$full_text" ] && [ -f "$volshow" ]; then
+  vs_ts=$(cat "$volshow" 2>/dev/null)
+  if [ -n "$vs_ts" ] && [ $((now_ts - vs_ts)) -lt 2 ]; then
+    vol=$(playerctl -p "$player" volume 2>/dev/null)
+    if [ -n "$vol" ]; then
+      pct=$(awk -v v="$vol" 'BEGIN{v=(v>1.0)?1.0:v; printf "%d", v*100+0.5}')
+      v0=" $pct%"
+      # Keep the module width stable: center the readout inside the exact
+      # width the title would use (same truncation, space-padded both sides).
+      ttext="$full_text"
+      if [ "$disp_len" -lt "${#ttext}" ]; then
+        ttext="${ttext:0:$((disp_len - 3))}..."
+      fi
+      n=${#ttext}; m=${#v0}
+      if [ "$m" -lt "$n" ]; then
+        pad=$((n - m)); left=$((pad / 2)); right=$((pad - left))
+        # shellcheck disable=SC2059
+        vtext="$(printf "%${left}s" '')$v0$(printf "%${right}s" '')"
+      else
+        vtext="$v0"
+      fi
+      vtip="$v0 · $full_text"
+      printf '%s\n' "$player" "$vtext" "$vtip" > "$cache"
+      echo "{\"text\":\"$vtext\",\"tooltip\":\"$vtip\",\"class\":\"$status\"}"
+      exit 0
+    fi
+  else
+    rm -f "$volshow"
+  fi
+fi
+
 # Show if Playing, or if Paused but we were already showing it (sticky).
 if [ -n "$player" ] && [ -n "$full_text" ]; then
   if [ "$status" = "Playing" ] || [ "$player" = "$cached_player" ]; then

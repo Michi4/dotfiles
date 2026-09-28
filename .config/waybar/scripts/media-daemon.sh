@@ -37,9 +37,9 @@ while true; do
       artist=$(escape "$(playerctl -p "$player" metadata artist 2>/dev/null)")
       album=$(escape "$(playerctl -p "$player" metadata album 2>/dev/null)")
       if [ -n "$artist" ]; then
-        last_text["$player"]="♫ $artist - $title"
+        last_text["$player"]="$artist - $title"
       else
-        last_text["$player"]="♫ $title"
+        last_text["$player"]="$title"
       fi
       last_tooltip["$player"]="${last_text[$player]}"
       [ -n "$album" ] && last_tooltip["$player"]="${last_tooltip[$player]} · $album"
