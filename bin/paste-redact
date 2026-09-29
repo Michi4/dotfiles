@@ -326,6 +326,9 @@ def vetoed(secret):
     s = secret.strip()
     if s.lower() in VETO_WORDS:
         return True
+    m = re.match(r"^([A-Za-z\xe4\xf6\xfc\xc4\xd6\xdc\xdf]+)(\d+)$", s)
+    if m and m.group(1).lower() in VETO_WORDS:
+        return True  # --password2 / user1: CLI flag names, not secrets
     if any(rx.match(s) for rx in VETO_RX):
         return True
     if " " in s and any(rx.search(s) for rx in CONTAINS_VETO_RX):
@@ -529,7 +532,8 @@ def query_llm(prompt, model, temp, num_ctx, num_predict, url, keep_alive, timeou
     return extract_spans(resp)
 
 
-def stage_llm(text, taken, cfg, strict, llm_stats, second=False, no_compact=False):
+def stage_llm(text, taken, cfg, strict, llm_stats, second=False, no_compact=False,
+              deadline=None):
     if second:  # second opinion: aggressive prompt, same fast model, warmer temp
         prompt_tmpl = LLM_PROMPT_STRICT
         model = cfg["model"]
@@ -574,10 +578,17 @@ def stage_llm(text, taken, cfg, strict, llm_stats, second=False, no_compact=Fals
         # attempt 2 gets double room: truncation at the cap is the top failure
         for np, temp in ((base_np, base_temp), (base_np * 2, base_temp + 0.2)):
             attempts += 1
+            toa = cfg.get("request_timeout", 150)
+            if deadline is not None:
+                rem = deadline - time.monotonic()
+                if rem < 8:
+                    errored = True
+                    continue  # no time left in this run's LLM budget
+                toa = min(toa, rem)
             try:
                 spans, repaired = query_llm(prompt, model, temp, num_ctx, np,
                                             cfg["ollama_url"], cfg.get("keep_alive", "15m"),
-                                            cfg.get("request_timeout", 150))
+                                            toa)
             except Exception as ex:
                 print("llm attempt %d failed (%s)" % (attempts, ex), file=sys.stderr)
                 errored = True
@@ -686,11 +697,21 @@ def redact(text, cfg, strict=False, no_compact=False):
     if not online:
         stats["llm"]["offline"] = True
         print("paste-redact: ollama offline - deterministic stages only", file=sys.stderr)
+    # Fast path: regex found nothing and no line even talks about
+    # credentials -> the LLM would only burn seconds to say []. Gitleaks
+    # (entropy) still runs; the LLM is skipped loudly, not silently.
+    has_kw = bool(SUSPICIOUS_RX.search(text))
+    run_llm = online and (bool(applied) or has_kw)
+    if online and not run_llm:
+        stats["llm"]["skipped"] = "no-hits-no-keywords"
+    # one wall-clock box for every LLM request in this run: pass 1 attempts
+    # get min(request_timeout, remaining), pass 2 / micro are skipped past it
+    deadline = t_all + cfg.get("llm_time_budget", 90)
     t0 = time.perf_counter()
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
         fg = ex.submit(stage_gitleaks, text, list(taken))
         fl = (ex.submit(stage_llm, text, list(taken), cfg, strict, stats["llm"],
-                        False, no_compact) if online else None)
+                        False, no_compact, deadline) if run_llm else None)
         g_repls = fg.result()
         l_repls = fl.result() if fl is not None else []
     stats["timings"]["detect_parallel"] = time.perf_counter() - t0
@@ -712,13 +733,14 @@ def redact(text, cfg, strict=False, no_compact=False):
     # credentials (small models drop findings when several secrets are present).
     # Full re-scan only pays off for single-chunk inputs; big inputs get the
     # cheaper micro-focus below instead.
-    if (online and cfg.get("llm_second_pass", True) and stats["llm"].get("chunks", 1) == 1
-            and applied):
+    if (run_llm and cfg.get("llm_second_pass", True) and stats["llm"].get("chunks", 1) == 1
+            and applied
+            and (time.perf_counter() - t_all) < cfg.get("llm_time_budget", 90)):
         untagged = "\n".join(l for l in text.split("\n") if "[REDACTED_" not in l)
         if SUSPICIOUS_RX.search(untagged):
             t0 = time.perf_counter()
             l2 = stage_llm(text, list(taken), cfg, strict, stats["llm"], second=True,
-                           no_compact=no_compact)
+                           no_compact=no_compact, deadline=deadline)
             stats["timings"]["llm_pass2"] = time.perf_counter() - t0
             l2 = [(s, e, lb) for s, e, lb in l2 if not overlapping(taken, s, e)]
             n0 = len(applied)
@@ -732,7 +754,8 @@ def redact(text, cfg, strict=False, no_compact=False):
     # secret sharing a line with the first). Handled spans are blanked (tags
     # get echoed, placeholder words get flagged - empty masks neither).
     # Capped, parallel, cheap.
-    if online and cfg.get("llm_micro_focus", True):
+    if (run_llm and cfg.get("llm_micro_focus", True)
+            and (time.perf_counter() - t_all) < cfg.get("llm_time_budget", 90)):
         fulllines = text.split("\n")
         targets = []
         for i, l in enumerate(fulllines):
@@ -751,6 +774,8 @@ def redact(text, cfg, strict=False, no_compact=False):
             model = cfg["model"]
 
             def run_micro(prompt):
+                if time.monotonic() > deadline:
+                    return []
                 try:
                     spans, _repaired = query_llm(prompt, model, cfg.get("temperature", 0.2) + 0.1,
                                                  m_ctx, cfg["num_predict"], cfg["ollama_url"],
@@ -808,6 +833,8 @@ def summarize(applied, stats, sinfo=None):
         health = " · LLM OFFLINE (deterministic only)"
     elif li.get("failed"):
         health = " · LLM failed (deterministic only)"
+    elif li.get("skipped"):
+        health = " · LLM skipped (clean, no keywords)"
     else:
         health = ""
     if not applied:
