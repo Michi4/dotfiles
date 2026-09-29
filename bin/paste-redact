@@ -706,7 +706,7 @@ def redact(text, cfg, strict=False, no_compact=False):
         stats["llm"]["skipped"] = "no-hits-no-keywords"
     # one wall-clock box for every LLM request in this run: pass 1 attempts
     # get min(request_timeout, remaining), pass 2 / micro are skipped past it
-    deadline = t_all + cfg.get("llm_time_budget", 90)
+    deadline = t_all + cfg.get("llm_time_budget", 300)
     t0 = time.perf_counter()
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
         fg = ex.submit(stage_gitleaks, text, list(taken))
@@ -735,7 +735,7 @@ def redact(text, cfg, strict=False, no_compact=False):
     # cheaper micro-focus below instead.
     if (run_llm and cfg.get("llm_second_pass", True) and stats["llm"].get("chunks", 1) == 1
             and applied
-            and (time.perf_counter() - t_all) < cfg.get("llm_time_budget", 90)):
+            and (time.perf_counter() - t_all) < cfg.get("llm_time_budget", 300)):
         untagged = "\n".join(l for l in text.split("\n") if "[REDACTED_" not in l)
         if SUSPICIOUS_RX.search(untagged):
             t0 = time.perf_counter()
@@ -755,7 +755,7 @@ def redact(text, cfg, strict=False, no_compact=False):
     # get echoed, placeholder words get flagged - empty masks neither).
     # Capped, parallel, cheap.
     if (run_llm and cfg.get("llm_micro_focus", True)
-            and (time.perf_counter() - t_all) < cfg.get("llm_time_budget", 90)):
+            and (time.perf_counter() - t_all) < cfg.get("llm_time_budget", 300)):
         fulllines = text.split("\n")
         targets = []
         for i, l in enumerate(fulllines):

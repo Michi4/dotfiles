@@ -3,7 +3,7 @@
   "ollama_url": "http://127.0.0.1:11434",
   "num_ctx": 2048,
   "num_predict": 256,
-  "llm_time_budget": 90,
+  "llm_time_budget": 300,
   "temperature": 0.2,
   "strict_temperature": 0.4,
   "keep_alive": "15m",
