@@ -51,6 +51,78 @@ def load_config():
         return json.load(f)
 
 
+def list_models(url, timeout=5):
+    """Installed ollama models ([{name, size}]) or None if unreachable."""
+    try:
+        with urllib.request.urlopen(url + "/api/tags", timeout=timeout) as r:
+            return json.loads(r.read().decode()).get("models", [])
+    except Exception:
+        return None
+
+
+_SERVER_CACHE = {"up": None, "at": 0.0}
+
+
+def ensure_server(cfg, ttl=120):
+    """True if ollama answers. Tries starting the system service once when
+    down (passwordless sudo); the verdict is cached briefly per process."""
+    now = time.monotonic()
+    if _SERVER_CACHE["up"] is not None and now - _SERVER_CACHE["at"] < ttl:
+        return _SERVER_CACHE["up"]
+    url = cfg["ollama_url"]
+    up = list_models(url, timeout=3) is not None
+    if not up:
+        try:
+            if subprocess.run(["sudo", "-n", "true"],
+                              capture_output=True, timeout=5).returncode == 0:
+                subprocess.run(["sudo", "-n", "systemctl", "start", "ollama"],
+                               capture_output=True, timeout=60)
+        except Exception as ex:
+            print("ollama autostart failed (%s)" % ex, file=sys.stderr)
+        for _ in range(15):
+            if list_models(url, timeout=3) is not None:
+                up = True
+                break
+            time.sleep(1)
+    _SERVER_CACHE.update(up=up, at=time.monotonic())
+    return up
+
+
+def pick_model(models, wanted):
+    """(name, note): wanted if installed, else smallest same-family model,
+    else smallest installed one. Never fails the pipeline on a 404 again."""
+    names = [m.get("name", "") for m in models]
+    if wanted in names:
+        return wanted, ""
+    if not names:
+        return wanted, ""
+    fam = wanted.split(":")[0] + ":"
+    pool = [n for n in names if n.startswith(fam)] or names
+    sizes = {m.get("name", ""): m.get("size", 0) or 0 for m in models}
+    best = sorted(pool, key=lambda n: (sizes.get(n, 0), n))[0]
+    return best, "model %s not installed, using %s" % (wanted, best)
+
+
+_RESOLVE_CACHE = {}
+
+
+def resolve_models(cfg):
+    """Copy of cfg with model/strict_model mapped to installed models."""
+    key = (cfg["ollama_url"], cfg["model"], cfg.get("strict_model"))
+    if key not in _RESOLVE_CACHE:
+        models = list_models(cfg["ollama_url"]) or []
+        dflt, note_d = pick_model(models, cfg["model"])
+        strict, note_s = pick_model(models, cfg.get("strict_model", cfg["model"]))
+        note = "; ".join(n for n in (note_d, note_s) if n)
+        _RESOLVE_CACHE[key] = (dflt, strict, note)
+    dflt, strict, note = _RESOLVE_CACHE[key]
+    cfg = dict(cfg)
+    cfg["model"], cfg["strict_model"] = dflt, strict
+    if note:
+        cfg["_model_note"] = note
+    return cfg
+
+
 LLM_PROMPT = """You scan pasted text for secrets to redact. Flag anything that looks like a password, API key, token, or credential - when in doubt, FLAG IT. Missing a secret is worse than flagging an extra candidate.
 Do NOT flag: hostnames, domain names, usernames, IP addresses, file paths, version numbers, port numbers, ordinary words, git commit hashes, shell commands with their flags/options/pipes/redirections, plain URLs without credentials, certificate fields (subject/issuer/dates). Ignore anything already masked as [REDACTED_...].
 Examples:
@@ -585,9 +657,13 @@ def match_spans(spans, text, taken, cfg, llm_stats):
 
 def redact(text, cfg, strict=False, no_compact=False):
     """Returns (redacted_text, applied, stats). applied entries hold label/tag/stage/original."""
+    cfg = resolve_models(cfg)
     stats = {"strict": strict, "stages": {}, "timings": {},
              "llm": {"attempts": 0, "model": cfg["strict_model"] if strict else cfg["model"],
                      "failed": False, "repaired": False, "unmatched": []}}
+    if cfg.get("_model_note"):
+        stats["llm"]["model_note"] = cfg["_model_note"]
+        print("paste-redact: %s" % cfg["_model_note"], file=sys.stderr)
     t_all = time.perf_counter()
     text = normalize(text)
     if not text:
@@ -603,14 +679,20 @@ def redact(text, cfg, strict=False, no_compact=False):
     taken = tag_spans(text)
     stats["stages"]["regex"] = len(applied)
 
-    # gitleaks and LLM overlap in wall-clock time on the same tagged text
+    # gitleaks and LLM overlap in wall-clock time on the same tagged text.
+    # If ollama is down (autostart failed) the LLM is skipped fast and the
+    # outage is flagged in stats/summary instead of failing silently.
+    online = ensure_server(cfg)
+    if not online:
+        stats["llm"]["offline"] = True
+        print("paste-redact: ollama offline - deterministic stages only", file=sys.stderr)
     t0 = time.perf_counter()
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
         fg = ex.submit(stage_gitleaks, text, list(taken))
-        fl = ex.submit(stage_llm, text, list(taken), cfg, strict, stats["llm"],
-                       False, no_compact)
+        fl = (ex.submit(stage_llm, text, list(taken), cfg, strict, stats["llm"],
+                        False, no_compact) if online else None)
         g_repls = fg.result()
-        l_repls = fl.result()
+        l_repls = fl.result() if fl is not None else []
     stats["timings"]["detect_parallel"] = time.perf_counter() - t0
 
     g_repls = [(s, e, lb) for s, e, lb in g_repls if not overlapping(taken, s, e)]
@@ -630,7 +712,7 @@ def redact(text, cfg, strict=False, no_compact=False):
     # credentials (small models drop findings when several secrets are present).
     # Full re-scan only pays off for single-chunk inputs; big inputs get the
     # cheaper micro-focus below instead.
-    if (cfg.get("llm_second_pass", True) and stats["llm"].get("chunks", 1) == 1
+    if (online and cfg.get("llm_second_pass", True) and stats["llm"].get("chunks", 1) == 1
             and applied):
         untagged = "\n".join(l for l in text.split("\n") if "[REDACTED_" not in l)
         if SUSPICIOUS_RX.search(untagged):
@@ -650,7 +732,7 @@ def redact(text, cfg, strict=False, no_compact=False):
     # secret sharing a line with the first). Handled spans are blanked (tags
     # get echoed, placeholder words get flagged - empty masks neither).
     # Capped, parallel, cheap.
-    if cfg.get("llm_micro_focus", True):
+    if online and cfg.get("llm_micro_focus", True):
         fulllines = text.split("\n")
         targets = []
         for i, l in enumerate(fulllines):
@@ -722,14 +804,20 @@ def summarize(applied, stats, sinfo=None):
              "llm2": "llm2", "llm-micro": "micro"}
     hits = "+".join("%s:%d" % (names.get(k, k), v) for k, v in stages.items() if v)
     stage_part = (" · " + hits) if hits else ""
+    if li.get("offline"):
+        health = " · LLM OFFLINE (deterministic only)"
+    elif li.get("failed"):
+        health = " · LLM failed (deterministic only)"
+    else:
+        health = ""
     if not applied:
-        summary = "clean (nothing redacted)"
+        summary = "clean (nothing redacted)" + health
         footer = "[paste-redact · clean · %.1fs%s%s]" % (total, comp, slim_suffix(sinfo))
     else:
         labels = ", ".join(sorted(counts))
         summary = "%d replacement%s (%s)" % (
             len(applied), "" if len(applied) == 1 else "s",
-            ", ".join("%s x%d" % (k, v) for k, v in sorted(counts.items())))
+            ", ".join("%s x%d" % (k, v) for k, v in sorted(counts.items()))) + health
         footer = "[paste-redact · %d× redacted: %s · %s · %.1fs%s%s%s]" % (
             len(applied), labels, li.get("model", "?"), total, comp, stage_part,
             slim_suffix(sinfo))
