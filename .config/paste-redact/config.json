@@ -4,6 +4,7 @@
   "num_ctx": 2048,
   "num_predict": 256,
   "llm_time_budget": 300,
+  "llm_skip_clean": false,
   "temperature": 0.2,
   "strict_temperature": 0.4,
   "keep_alive": "15m",

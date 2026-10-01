@@ -697,12 +697,14 @@ def redact(text, cfg, strict=False, no_compact=False):
     if not online:
         stats["llm"]["offline"] = True
         print("paste-redact: ollama offline - deterministic stages only", file=sys.stderr)
-    # Fast path: regex found nothing and no line even talks about
-    # credentials -> the LLM would only burn seconds to say []. Gitleaks
-    # (entropy) still runs; the LLM is skipped loudly, not silently.
+    # Fast path (opt-in via llm_skip_clean): regex found nothing and no line
+    # even talks about credentials -> the LLM would only burn seconds to say
+    # []. Gitleaks (entropy) still runs. Default is OFF: thorough beats fast.
     has_kw = bool(SUSPICIOUS_RX.search(text))
-    run_llm = online and (bool(applied) or has_kw)
-    if online and not run_llm:
+    skip_clean = (online and cfg.get("llm_skip_clean", False)
+                  and not applied and not has_kw)
+    run_llm = online and not skip_clean
+    if skip_clean:
         stats["llm"]["skipped"] = "no-hits-no-keywords"
     # one wall-clock box for every LLM request in this run: pass 1 attempts
     # get min(request_timeout, remaining), pass 2 / micro are skipped past it
