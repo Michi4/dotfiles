@@ -1,0 +1,68 @@
+#!/bin/bash
+# laptop-backup [home|root|all] - versioned encrypted backup to the homeserver.
+# Runs as root (systemd timers). Repo + password live outside this file.
+# First run ever: laptop-backup init (creates the repo, needs network + password).
+set -euo pipefail
+
+# ---- CONFIG (edit here if the server layout changes) ----
+REPO="${RESTIC_REPO:-sftp:HOME:/mnt/toshiba/restic-hp835}"
+PASSFILE="${RESTIC_PASSFILE:-/root/.restic-pass}"
+HOME_EXCLUDES="/home/michi/dotfiles/.config/restic/exclude-home"
+ROOT_EXCLUDES="/home/michi/dotfiles/.config/restic/exclude-root"
+LOG="/var/log/laptop-backup.log"
+# ----------------------------------------------------------
+
+export RESTIC_REPOSITORY="$REPO"
+export RESTIC_PASSWORD_FILE="$PASSFILE"
+
+log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
+die() { log "FATAL: $*"; notify "backup FAILED: $*" 2>/dev/null || true; exit 1; }
+notify() { sudo -u michi notify-send "laptop-backup" "$*" 2>/dev/null || true; }
+
+[ -r "$PASSFILE" ] || die "password file $PASSFILE missing/unreadable"
+command -v restic >/dev/null || die "restic not installed"
+
+WHAT="${1:-all}"
+if [ "$WHAT" = "init" ]; then
+    log "creating repo $REPO"
+    restic init || die "restic init failed (repo path reachable? ssh key deployed?)"
+    log "repo ready"
+    exit 0
+fi
+
+# inventories so a bare-metal restore knows WHAT to reinstall
+pacman -Qqe > /root/pkglist.txt 2>/dev/null || true
+ollama list > /root/ollama-models.txt 2>/dev/null || true
+
+run_home() {
+    log "backup home started"
+    restic backup --exclude-file="$HOME_EXCLUDES" --one-file-system \
+        --tag home /home/michi 2>&1 | tail -5 >>"$LOG" \
+        || die "home backup failed (see $LOG)"
+}
+
+run_root() {
+    log "backup root-set started"
+    restic backup --exclude-file="$ROOT_EXCLUDES" \
+        --tag rootset /etc /root /usr/local/bin /usr/local/etc /usr/local/share 2>&1 | tail -5 >>"$LOG" \
+        || die "root-set backup failed (see $LOG)"
+}
+
+case "$WHAT" in
+    home) run_home ;;
+    root) run_root ;;
+    all) run_home; run_root ;;
+    forget)
+        log "applying retention"
+        restic forget --keep-hourly 24 --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune 2>&1 | tail -3 >>"$LOG" \
+            || die "forget/prune failed"
+        ;;
+    check)
+        restic check --read-subset=5% 2>&1 | tail -3 >>"$LOG" || die "repo check failed"
+        ;;
+    *) echo "usage: $0 [home|root|all|forget|check|init]"; exit 2 ;;
+esac
+
+SNAP="$(restic snapshots --latest 1 --json 2>/dev/null | python3 -c 'import json,sys; s=json.load(sys.stdin); print(s[0]["short_id"] if s else "?")')"
+log "done ($WHAT, latest snapshot $SNAP)"
+notify "done ($WHAT, $SNAP)"

@@ -1,0 +1,4 @@
+# restic excludes for the root set — programs and models are reinstallable,
+# only configuration + inventories are backed up.
+usr/local/lib/ollama
+usr/local/lib/node_modules

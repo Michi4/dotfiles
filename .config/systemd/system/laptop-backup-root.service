@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily encrypted root-set backup to homeserver
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/michi/dotfiles/bin/laptop-backup root
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

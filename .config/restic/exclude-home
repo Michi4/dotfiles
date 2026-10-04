@@ -1,0 +1,16 @@
+# restic excludes for /home/michi — caches, reinstallables, regenerable bulk.
+# Everything personal/configured stays IN (thunderbird mail, mozilla profile,
+# compatdata prefixes, userdata saves, Downloads, Pictures, dotfiles...).
+.cache
+.var
+.local/share/Trash
+.local/share/Steam/steamapps/common
+.local/share/Steam/steamapps/shadercache
+.local/share/Steam/steamapps/downloading
+.local/share/Steam/steamapps/temp
+.local/share/Steam/logs
+.local/share/Steam/dumps
+__pycache__
+*.pyc
+.npm/_cacache
+.yarn/cache
