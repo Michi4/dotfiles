@@ -15,5 +15,15 @@
 .local/share/pnpm
 __pycache__
 *.pyc
-.npm/_cacache
+node_modules
+.venv
+venv
+.tox
+target
+.npm
 .yarn/cache
+.cargo/registry
+go/pkg
+.gradle
+.m2
+.pub-cache
