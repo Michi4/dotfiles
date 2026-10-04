@@ -1,0 +1,118 @@
+#!/bin/bash
+# laptop-restore - bare-metal rebuild helper. Everything is a toggle: edit the
+# CONFIG below once, or pass --only/--skip on the command line.
+# Safe by default: every section asks before doing anything (use --yes to blitz).
+set -euo pipefail
+
+# ---- CONFIG: set false for anything you want to handle by hand ----
+DO_PACKAGES=true    # official repo packages (pacman -S from pkglist)
+DO_AUR=true         # AUR packages (yay -S, from pkglist)
+DO_FLATPAK=true     # flatpak apps
+DO_OLLAMA=true      # ollama pull saved models
+DO_DOTFILES=true    # git clone dotfiles + install.sh --no-packages (symlinks)
+DO_HOME=true        # restic restore of /home/michi (the big one)
+DO_ROOTSET=true     # restic restore of /etc /root /usr/local bits
+# --------------------------------------------------------------------
+
+REPO="${RESTIC_REPO:-sftp:HOME:/mnt/toshiba/restic-hp835}"
+export RESTIC_REPOSITORY="$REPO"
+export RESTIC_PASSWORD_FILE="${RESTIC_PASSFILE:-/root/.restic-pass}"
+SNAP="${RESTIC_SNAP:-latest}"
+
+YES=false; ONLY=""; SKIP=""
+for a in "$@"; do
+    case "$a" in
+        --yes) YES=true ;;
+        --only=*) ONLY="${a#--only=}" ;;
+        --skip=*) SKIP="${a#--skip=}" ;;
+        *) echo "usage: $0 [--yes] [--only=a,b] [--skip=c]  (sections: packages,aur,flatpak,ollama,dotfiles,home,rootset)"; exit 2 ;;
+    esac
+done
+
+want() { # want <section>
+    local s="$1" on=true
+    [ -n "$ONLY" ] && [[ ",$ONLY," != *",$s,"* ]] && on=false
+    [[ ",$SKIP," == *",$s,"* ]] && on=false
+    $on
+}
+confirm() { # confirm <text>
+    $YES && return 0
+    read -rp "$1 [y/N] " a; [ "$a" = y ] || [ "$a" = Y ]
+}
+need() { command -v "$1" >/dev/null || { echo "need $1 installed first"; return 1; }; }
+
+# restic snapshots live on the server; inventories inside the rootset snapshot
+TMPD="$(mktemp -d)"; trap 'rm -rf "$TMPD"' EXIT
+if want packages || want aur; then
+    need restic
+    restic dump "$SNAP" /root/repo-pkgs.txt >"$TMPD/repo.txt" 2>/dev/null \
+        || restic dump "$SNAP" /root/pkglist.txt >"$TMPD/repo.txt" 2>/dev/null \
+        || { echo "no package list in snapshot $SNAP (run a root backup first)"; exit 1; }
+fi
+
+if $DO_PACKAGES && want packages; then
+    n=$(wc -l <"$TMPD/repo.txt")
+    echo "official packages to install: $n"
+    if [ "$n" -gt 0 ] && confirm "pacman -S $n packages?"; then
+        sudo pacman -S --noconfirm --needed - <"$TMPD/repo.txt"
+    fi
+fi
+
+if $DO_AUR && want aur; then
+    restic dump "$SNAP" /root/aur-pkgs.txt >"$TMPD/aur.txt" 2>/dev/null \
+        || pacman -Qqm >"$TMPD/aur.txt" 2>/dev/null || true
+    n=$(wc -l <"$TMPD/aur.txt")
+    echo "AUR packages on record: $n"
+    if [ "$n" -gt 0 ] && confirm "yay -S $n AUR packages (takes a while)?"; then
+        need yay
+        yay -S --noconfirm --needed - <"$TMPD/aur.txt"
+    fi
+fi
+
+if $DO_FLATPAK && want flatpak; then
+    need restic
+    if restic dump "$SNAP" /root/flatpak-apps.txt >"$TMPD/flat.txt" 2>/dev/null; then
+        echo "flatpak apps on record:"; cat "$TMPD/flat.txt"
+        confirm "flatpak install all listed?" && xargs -a "$TMPD/flat.txt" flatpak install -y
+    else
+        echo "no flatpak list in snapshot, skipping"
+    fi
+fi
+
+if $DO_OLLAMA && want ollama; then
+    need restic
+    if restic dump "$SNAP" /root/ollama-models.txt >"$TMPD/oll.txt" 2>/dev/null; then
+        grep -oE '^[a-z0-9._-]+:[a-z0-9._-]+' "$TMPD/oll.txt" | sort -u >"$TMPD/models.txt" || true
+        echo "ollama models on record:"; cat "$TMPD/models.txt"
+        if confirm "ollama pull all listed?"; then
+            while read -r m; do [ -n "$m" ] && ollama pull "$m"; done <"$TMPD/models.txt"
+        fi
+    else
+        echo "no ollama list in snapshot, skipping"
+    fi
+fi
+
+if $DO_DOTFILES && want dotfiles; then
+    if [ -d ~/dotfiles/.git ]; then
+        echo "dotfiles already present, pulling latest"
+        confirm "git pull dotfiles?" && git -C ~/dotfiles pull
+    elif confirm "git clone dotfiles?"; then
+        git clone https://github.com/Michi4/dotfiles.git ~/dotfiles
+    fi
+    confirm "run dotfiles install.sh --no-packages (symlinks)?" && ~/dotfiles/install.sh --no-packages
+fi
+
+if $DO_ROOTSET && want rootset; then
+    echo "restores /etc /root /usr/local/{bin,etc,share} from $SNAP (merge, overwrites)"
+    confirm "restic restore rootset to / ?" \
+        && sudo -E restic restore "$SNAP" --target / --include /etc --include /root --include /usr/local
+fi
+
+if $DO_HOME && want home; then
+    echo "restores /home/michi from $SNAP (merge, overwrites changed files)"
+    echo "tip: --include '/home/michi/Pictures' restores just one tree (edit me!)"
+    confirm "restic restore home (FULL, ~150G download)?" \
+        && sudo -E restic restore "$SNAP" --target / --include /home/michi
+fi
+
+echo "restore pass finished."

@@ -10,6 +10,9 @@
 .local/share/Steam/steamapps/temp
 .local/share/Steam/logs
 .local/share/Steam/dumps
+.local/share/JetBrains
+.local/share/torbrowser
+.local/share/pnpm
 __pycache__
 *.pyc
 .npm/_cacache

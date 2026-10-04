@@ -32,6 +32,9 @@ fi
 
 # inventories so a bare-metal restore knows WHAT to reinstall
 pacman -Qqe > /root/pkglist.txt 2>/dev/null || true
+pacman -Qqn > /root/repo-pkgs.txt 2>/dev/null || true
+pacman -Qqm > /root/aur-pkgs.txt 2>/dev/null || true
+flatpak list --app --columns=application > /root/flatpak-apps.txt 2>/dev/null || true
 ollama list > /root/ollama-models.txt 2>/dev/null || true
 
 run_home() {
