@@ -22,6 +22,14 @@ notify() { sudo -u michi notify-send "laptop-backup" "$*" 2>/dev/null || true; }
 [ -r "$PASSFILE" ] || die "password file $PASSFILE missing/unreadable"
 command -v restic >/dev/null || die "restic not installed"
 
+# metered connections (phone hotspot, roaming): backups wait for real wifi.
+# Override with: laptop-backup <what> --force
+if [[ " $* " != *" --force "* ]] && \
+   nmcli -t -f GENERAL.METERED dev show 2>/dev/null | grep -q ":yes"; then
+    log "metered connection - skipping backup (override: --force)"
+    exit 0
+fi
+
 WHAT="${1:-all}"
 if [ "$WHAT" = "init" ]; then
     log "creating repo $REPO"
@@ -63,7 +71,7 @@ case "$WHAT" in
     check)
         restic check --read-subset=5% 2>&1 | tail -3 >>"$LOG" || die "repo check failed"
         ;;
-    *) echo "usage: $0 [home|root|all|forget|check|init]"; exit 2 ;;
+    *) echo "usage: $0 [home|root|all|forget|check|init] [--force]"; exit 2 ;;
 esac
 
 SNAP="$(restic snapshots --latest 1 --json 2>/dev/null | python3 -c 'import json,sys; s=json.load(sys.stdin); print(s[-1]["short_id"] if s else "?")')"
