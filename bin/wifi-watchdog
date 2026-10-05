@@ -1,0 +1,39 @@
+#!/bin/bash
+# wifi-watchdog - Intel BE200 firmware occasionally drops the device entirely
+# (empty `iw dev`, dead network). Detect and revive: iwd restart first,
+# driver reload if that fails. Logs + notifies only when it acts.
+set -u
+LOG="/var/log/wifi-watchdog.log"
+log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
+notify() { sudo -u michi notify-send "wifi-watchdog" "$*" 2>/dev/null || true; }
+
+lsmod | grep -q "^iwlwifi" || exit 0  # not an Intel box, nothing to do
+
+if iw dev 2>/dev/null | grep -q "Interface"; then
+    # NOTE: a present-but-down interface is normal (out of range, not
+    # connected) - touching it would just generate notify spam. Only the
+    # vanished-device case is handled below.
+    exit 0
+fi
+
+log "no wireless device, restarting iwd"
+systemctl restart iwd
+sleep 20
+if iw dev 2>/dev/null | grep -q "Interface"; then
+    log "recovered via iwd restart"
+    notify "WiFi firmware crashed, revived (iwd restart)"
+    exit 0
+fi
+
+log "iwd restart insufficient, reloading iwlwifi"
+modprobe -r iwlwifi
+sleep 3
+modprobe iwlwifi
+sleep 20
+if iw dev 2>/dev/null | grep -q "Interface"; then
+    log "recovered via driver reload"
+    notify "WiFi firmware crashed, revived (driver reload)"
+else
+    log "STILL GONE after driver reload - needs eyes"
+    notify "WiFi dead even after driver reload - check it"
+fi

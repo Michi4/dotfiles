@@ -1,0 +1,7 @@
+[Unit]
+Description=Revive vanished Intel WiFi (BE200 firmware crashes)
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/michi/dotfiles/bin/wifi-watchdog
