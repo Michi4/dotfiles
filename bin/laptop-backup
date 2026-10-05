@@ -49,14 +49,20 @@ run_home() {
     log "backup home started"
     restic backup --exclude-file="$HOME_EXCLUDES" --one-file-system \
         --tag home /home/michi 2>&1 | tail -5 >>"$LOG" \
-        || die "home backup failed (see $LOG)"
+        || { log "home backup failed, retrying once in 60s (transient net?)"; sleep 60
+             restic backup --exclude-file="$HOME_EXCLUDES" --one-file-system \
+                 --tag home /home/michi 2>&1 | tail -5 >>"$LOG" \
+                 || die "home backup failed twice (see $LOG)"; }
 }
 
 run_root() {
     log "backup root-set started"
     restic backup --exclude-file="$ROOT_EXCLUDES" \
         --tag rootset /etc /root /usr/local/bin /usr/local/etc /usr/local/share 2>&1 | tail -5 >>"$LOG" \
-        || die "root-set backup failed (see $LOG)"
+        || { log "root-set backup failed, retrying once in 60s"; sleep 60
+             restic backup --exclude-file="$ROOT_EXCLUDES" \
+                 --tag rootset /etc /root /usr/local/bin /usr/local/etc /usr/local/share 2>&1 | tail -5 >>"$LOG" \
+                 || die "root-set backup failed twice (see $LOG)"; }
 }
 
 case "$WHAT" in
