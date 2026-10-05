@@ -4,6 +4,9 @@
 seen_file="/tmp/waybar-clock-seen"
 style="$HOME/.config/wofi/notifications.css"
 
+# force clock + dot to re-render within their next tick
+refresh() { rm -f /tmp/waybar-clock-notifs; pkill -RTMIN+15 waybar 2>/dev/null || true; }
+
 while true; do
   hist_json=$(makoctl history -j 2>/dev/null || echo '[]')
   hcount=$(jq 'length' <<< "$hist_json" 2>/dev/null || echo 0)
@@ -27,9 +30,10 @@ while true; do
   id=$(grep -oE 'ID:[0-9]+' <<< "$pick" | cut -d: -f2)
   if [ -n "$id" ]; then
     makoctl dismiss -n "$id" 2>/dev/null
+    refresh
   else
     makoctl dismiss --all 2>/dev/null
-    rm -f /tmp/waybar-clock-notifs
+    refresh
     exit 0
   fi
 done

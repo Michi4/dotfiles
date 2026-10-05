@@ -19,7 +19,8 @@
     "memory",
     "battery",
     "custom/weather",
-    "custom/clock"
+    "custom/clock",
+    "custom/notifications-dot"
   ],
   "custom/clock": {
     "format": "{}",
@@ -149,6 +150,16 @@
     "on-scroll-down": "~/.config/waybar/scripts/media-volume.sh 5 down",
     "interval": 5,
     "signal": 13,
+    "cursor": true,
+    "tooltip": true
+  },
+  "custom/notifications-dot": {
+    "format": "{}",
+    "return-type": "json",
+    "exec": "~/.config/waybar/scripts/notifications-dot.sh",
+    "on-click": "~/.config/waybar/scripts/notifications-menu.sh",
+    "interval": 2,
+    "signal": 15,
     "cursor": true,
     "tooltip": true
   },

@@ -42,7 +42,7 @@ if [ "$cache_age" -gt 5 ]; then
   maxid=$(jq '[.[].id] | max // 0' <<< "$hist_json" 2>/dev/null)
   [ -z "$maxid" ] && maxid=0
   {
-    echo "$vis $maxid"
+    echo "$vis $maxid $hcount"
     if [ "$hcount" -gt 0 ] 2>/dev/null; then
       echo "<b>Notifications ($hcount)</b>"
       jq -r 'reverse | .[0:6] | map("<span background=\"#2e3440\"> <b><span color=\"#81a1c1\">\(.app_name // "Notification" | @html)</span></b>: \(.summary | @html)\n <small><span color=\"#9aa0a6\">\(.body // "" | .[0:200] | @html)</span></small> </span>") | join("\n\n")' <<< "$hist_json" 2>/dev/null
@@ -52,9 +52,10 @@ if [ "$cache_age" -gt 5 ]; then
     fi
   } > "$notif_cache"
 fi
-read -r vis maxid < "$notif_cache" 2>/dev/null
+read -r vis maxid hcount < "$notif_cache" 2>/dev/null
 [ -z "$vis" ] && vis=0
 [ -z "$maxid" ] && maxid=0
+[ -z "$hcount" ] && hcount=0
 seen=$(cat "$seen_file" 2>/dev/null || echo 0)
 [ -z "$seen" ] && seen=0
 notif_section=$(tail -n +2 "$notif_cache")

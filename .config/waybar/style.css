@@ -323,10 +323,16 @@ tooltip label {
   background-color: #5e81ac;
 }
 
-/* Red dot, top-right corner, zero layout cost (pure background paint) */
-#custom-clock.notified {
-  background-image: radial-gradient(circle, #bf616a 3.5px, transparent 4px);
-  background-repeat: no-repeat;
-  background-position: top right;
-  background-size: 9px 9px;
+/* Standalone notification dot: zero width when clean, clickable when lit */
+#custom-notifications-dot {
+  padding: 0;
+  margin: 0;
+}
+
+#custom-notifications-dot.notified {
+  padding: 0 6px;
+}
+
+#custom-notifications-dot.notified:hover {
+  background-color: #5e81ac;
 }
