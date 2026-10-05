@@ -28,7 +28,7 @@
     "interval": 60,
     "cursor": true,
     "on-click": "xdg-open https://calendar.google.com",
-    "on-click-right": "~/.config/waybar/scripts/notifications-show.sh"
+    "on-click-middle": "~/.config/waybar/scripts/notifications-menu.sh"
   },
   "battery": {
     "format": "{capacity}% {power:3.1f}W",
