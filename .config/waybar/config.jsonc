@@ -13,6 +13,7 @@
   "modules-center": [],
   "modules-right": [
     "tray",
+    "custom/notifications",
     "custom/network",
     "pulseaudio",
     "cpu",
@@ -58,6 +59,17 @@
     "cursor": true,
     "tooltip": true,
     "on-click": "foot -e impala"
+  },
+  "custom/notifications": {
+    "format": "{}",
+    "return-type": "json",
+    "exec": "~/.config/waybar/scripts/notifications.sh",
+    "on-click": "~/.config/waybar/scripts/notifications-show.sh",
+    "on-click-right": "makoctl dismiss --all && pkill -RTMIN+14 waybar",
+    "interval": 5,
+    "signal": 14,
+    "cursor": true,
+    "tooltip": true
   },
   "pulseaudio": {
     "format": "{icon} {volume}%",
