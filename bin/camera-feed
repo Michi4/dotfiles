@@ -2,7 +2,7 @@
 # camera-feed - supervisor: keeps /dev/video97 fed forever, hot-swaps the
 # SOURCE when /tmp/camera-mode changes. No restarts, no device renegotiation.
 #   on  = live IPU6 sensor (LED lit, 720p30, ~1-2s sensor warmup, physics)
-#   else = black placeholder (LED dark, 720p5, sips CPU)
+#   else = black placeholder (LED dark, 720p30, minimal CPU, no convert)
 # Apps see an unbroken stream; only the picture changes.
 DEV="${1:-/dev/video97}"
 MODEFILE=/tmp/camera-mode
@@ -14,9 +14,9 @@ start_feeder() {
       ! video/x-raw,format=YUY2,width=1280,height=720,framerate=30/1 ! queue \
       ! v4l2sink device="$DEV" sync=false &
   else
-    /usr/bin/gst-launch-1.0 -e videotestsrc pattern=black ! videoconvert \
-      ! video/x-raw,format=YUY2,width=1280,height=720,framerate=5/1 \
-      ! v4l2sink device="$DEV" sync=false &
+    /usr/bin/gst-launch-1.0 -e videotestsrc pattern=black \
+      ! video/x-raw,format=YUY2,width=1280,height=720,framerate=30/1 \
+      ! v4l2sink device="$DEV" sync=true &
   fi
   FEEDER=$!
 }
