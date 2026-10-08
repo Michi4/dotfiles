@@ -9,5 +9,4 @@ Environment=HOME=/root
 Environment=XDG_CACHE_HOME=/root/.cache
 ExecStart=/home/michi/dotfiles/bin/laptop-backup home
 Nice=10
-IOSchedulingClass=best-effort
-IOSchedulingPriority=7
+IOSchedulingClass=idle
