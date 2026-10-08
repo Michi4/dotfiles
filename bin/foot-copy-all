@@ -1,0 +1,5 @@
+#!/bin/bash
+# foot-copy-all - dump the whole scrollback (terminal history) to clipboard.
+# Bound to Ctrl+Shift+A in foot (Tabby-style select-all, minus the highlight
+# step: foot has no keyboard selection, so this goes straight to clipboard).
+wl-copy && notify-send "foot" "terminal history copied to clipboard"
