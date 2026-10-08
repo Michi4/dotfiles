@@ -336,23 +336,3 @@ tooltip label {
 #custom-notifications-dot.notified:hover {
   background-color: #5e81ac;
 }
-
-/*------------------------------------*/
-/* Tailscale                           */
-/*------------------------------------*/
-#custom-tailscale {
-  padding: 0 10px;
-  color: #a3be8c;
-}
-
-#custom-tailscale.down {
-  color: #bf616a;
-}
-
-#custom-tailscale.exit {
-  color: #88c0d0;
-}
-
-#custom-tailscale:hover {
-  background-color: #5e81ac;
-}

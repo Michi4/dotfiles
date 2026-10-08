@@ -14,7 +14,6 @@
   "modules-right": [
     "tray",
     "custom/network",
-    "custom/tailscale",
     "pulseaudio",
     "cpu",
     "memory",
@@ -61,15 +60,6 @@
     "cursor": true,
     "tooltip": true,
     "on-click": "foot -e impala"
-  },
-  "custom/tailscale": {
-    "format": "{}",
-    "return-type": "json",
-    "exec": "~/.config/waybar/scripts/tailscale.sh",
-    "on-click": "foot -e sh -c 'tailscale status; echo; read -p ENTER'",
-    "interval": 30,
-    "cursor": true,
-    "tooltip": true
   },
   "pulseaudio": {
     "format": "{icon} {volume}%",
