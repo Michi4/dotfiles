@@ -1,0 +1,15 @@
+#!/bin/bash
+# camera-toggle - on-demand RelayCam for legacy V4L2 apps (Discord etc).
+# Browsers use the PipeWire camera directly and never need this.
+if systemctl --user is-active -q camera-relay.service; then
+  systemctl --user stop camera-relay.service
+  notify-send "camera" "RelayCam off - LED out" 2>/dev/null
+else
+  systemctl --user start camera-relay.service
+  sleep 2
+  if systemctl --user is-active -q camera-relay.service; then
+    notify-send "camera" "RelayCam on (/dev/video97) - LED lit" 2>/dev/null
+  else
+    notify-send -u critical "camera" "relay failed to start" 2>/dev/null
+  fi
+fi

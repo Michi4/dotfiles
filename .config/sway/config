@@ -214,6 +214,9 @@ bindsym $mod+Shift+d exec bash -c 'sudo /usr/bin/resolvectl flush-caches && noti
     bindsym $mod+Shift+v exec /home/michi/bin/paste-redact-clip auto
     bindsym $mod+Ctrl+Shift+v exec /home/michi/bin/paste-redact-clip preview
 
+    # Camera relay for legacy V4L2 apps (Discord etc): $mod+c toggles, LED follows
+    bindsym $mod+c exec /home/michi/bin/camera-toggle
+
     for_window [app_id="copyq"] floating enable
     for_window [app_id="pavucontrol"] floating enable
     for_window [app_id="qalculate-gtk"] floating enable
