@@ -1,0 +1,48 @@
+#!/bin/bash
+# camera-feed - supervisor: keeps /dev/video97 fed forever, hot-swaps the
+# SOURCE when /tmp/camera-mode changes. No restarts, no device renegotiation.
+#   on  = live IPU6 sensor (LED lit, 720p30, ~1-2s sensor warmup, physics)
+#   else = black placeholder (LED dark, 720p5, sips CPU)
+# Apps see an unbroken stream; only the picture changes.
+DEV="${1:-/dev/video97}"
+MODEFILE=/tmp/camera-mode
+log() { echo "[camera-feed] $*" >&2; }
+
+start_feeder() {
+  if [ "$1" = "on" ]; then
+    /usr/bin/gst-launch-1.0 -e libcamerasrc ! queue ! videoconvert ! videoscale \
+      ! video/x-raw,format=YUY2,width=1280,height=720,framerate=30/1 ! queue \
+      ! v4l2sink device="$DEV" sync=false &
+  else
+    /usr/bin/gst-launch-1.0 -e videotestsrc pattern=black ! videoconvert \
+      ! video/x-raw,format=YUY2,width=1280,height=720,framerate=5/1 \
+      ! v4l2sink device="$DEV" sync=false &
+  fi
+  FEEDER=$!
+}
+
+stop_feeder() { kill "$FEEDER" 2>/dev/null; wait "$FEEDER" 2>/dev/null; return 0; }
+
+cur=$(cat "$MODEFILE" 2>/dev/null || echo off)
+[ "$cur" = "on" ] || cur="off"
+start_feeder "$cur"
+log "feeding ($cur)"
+
+trap 'log "stopping"; stop_feeder; exit 0' TERM INT
+touch "$MODEFILE"
+while true; do
+  inotifywait -qq -t 5 -e close_write,moved_to,create "$MODEFILE" 2>/dev/null
+  if ! kill -0 "$FEEDER" 2>/dev/null; then
+    log "feeder died, restarting ($cur)"
+    start_feeder "$cur"
+    continue
+  fi
+  new=$(cat "$MODEFILE" 2>/dev/null || echo off)
+  [ "$new" = "on" ] || new="off"
+  if [ "$new" != "$cur" ]; then
+    log "mode $cur -> $new (hot-swap, no restart)"
+    cur="$new"
+    stop_feeder
+    start_feeder "$cur"
+  fi
+done
