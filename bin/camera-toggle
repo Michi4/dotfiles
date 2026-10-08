@@ -1,11 +1,69 @@
 #!/bin/bash
-# camera-toggle - swap RelayCam between live sensor and black placeholder.
-# No restarts: the supervisor hot-swaps the feed, device never drops.
-# LED follows the real sensor only.
-if [ "$(cat /tmp/camera-mode 2>/dev/null || echo off)" = "on" ]; then
-  echo off > /tmp/camera-mode
-  notify-send "camera" "RelayCam placeholder - LED out" 2>/dev/null
-else
-  echo on > /tmp/camera-mode
-  notify-send "camera" "RelayCam LIVE - warming up (~2s)" 2>/dev/null
-fi
+# camera-toggle - RelayCam control.
+#   (no arg) : smart toggle. Service down -> arm it and go LIVE.
+#              Running -> flip live <-> placeholder (hot-swap, no restart).
+#   on       : force live picture.
+#   off      : force black placeholder (device stays listed, LED dark).
+#   disable  : FULL OFF - stop service, unload module, device vanishes.
+#              Nothing runs, zero CPU, Discord can't even see it.
+#   enable   : bring everything back (placeholder mode).
+#   status   : notify current state.
+svc() { systemctl --user "$@" camera-relay.service 2>/dev/null; }
+
+case "${1:-toggle}" in
+  disable)
+    svc stop
+    svc disable
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      svc is-active -q || break
+      sleep 0.5
+    done
+    if svc is-active -q; then
+      notify-send -u critical "camera" "service would not stop - investigate" 2>/dev/null
+    elif sudo -n modprobe -r v4l2loopback 2>/dev/null; then
+      notify-send "camera" "fully DISABLED - device gone, zero cost" 2>/dev/null
+    else
+      notify-send -u critical "camera" "device busy - close apps using it, retry" 2>/dev/null
+    fi
+    ;;
+  enable)
+    sudo -n modprobe v4l2loopback 2>/dev/null
+    echo off > /tmp/camera-mode
+    svc enable
+    svc start
+    notify-send "camera" "armed (placeholder) - Mod+C for live" 2>/dev/null
+    ;;
+  status)
+    if [ -e /dev/video97 ]; then
+      state="placeholder"
+      [ "$(cat /tmp/camera-mode 2>/dev/null)" = "on" ] && state="LIVE"
+      notify-send "camera" "present (/dev/video97), $state" 2>/dev/null
+    else
+      notify-send "camera" "fully disabled" 2>/dev/null
+    fi
+    ;;
+  on)
+    svc start 2>/dev/null
+    echo on > /tmp/camera-mode
+    notify-send "camera" "RelayCam LIVE - warming up (~2s)" 2>/dev/null
+    ;;
+  off)
+    echo off > /tmp/camera-mode
+    notify-send "camera" "RelayCam placeholder - LED out" 2>/dev/null
+    ;;
+  toggle)
+    if ! svc is-active -q; then
+      sudo -n modprobe v4l2loopback 2>/dev/null
+      svc enable
+      svc start
+      sleep 1
+    fi
+    if [ "$(cat /tmp/camera-mode 2>/dev/null || echo off)" = "on" ]; then
+      echo off > /tmp/camera-mode
+      notify-send "camera" "RelayCam placeholder - LED out" 2>/dev/null
+    else
+      echo on > /tmp/camera-mode
+      notify-send "camera" "RelayCam LIVE - warming up (~2s)" 2>/dev/null
+    fi
+    ;;
+esac
