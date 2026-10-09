@@ -1,10 +1,10 @@
 #!/bin/bash
-# camera-feed - supervisor: keeps /dev/video97 fed forever, hot-swaps the
+# camera-feed - supervisor: keeps /dev/video48 fed forever, hot-swaps the
 # SOURCE when /tmp/camera-mode changes. No restarts, no device renegotiation.
 #   on  = live IPU6 sensor (LED lit, 720p30, ~1-2s sensor warmup, physics)
 #   else = black placeholder (LED dark, 720p30, minimal CPU, no convert)
 # Apps see an unbroken stream; only the picture changes.
-DEV="${1:-/dev/video97}"
+DEV="${1:-/dev/video48}"
 MODEFILE=/tmp/camera-mode
 log() { echo "[camera-feed] $*" >&2; }
 

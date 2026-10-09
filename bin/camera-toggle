@@ -34,10 +34,10 @@ case "${1:-toggle}" in
     notify-send "camera" "armed (placeholder) - Mod+C for live" 2>/dev/null
     ;;
   status)
-    if [ -e /dev/video97 ]; then
+    if [ -e /dev/video48 ]; then
       state="placeholder"
       [ "$(cat /tmp/camera-mode 2>/dev/null)" = "on" ] && state="LIVE"
-      notify-send "camera" "present (/dev/video97), $state" 2>/dev/null
+      notify-send "camera" "present (/dev/video48), $state" 2>/dev/null
     else
       notify-send "camera" "fully disabled" 2>/dev/null
     fi
