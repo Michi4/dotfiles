@@ -195,6 +195,9 @@ bindsym $mod+Shift+d exec bash -c 'sudo /usr/bin/resolvectl flush-caches && noti
     # 1. Capture a region and edit (Arrows, Text, Blur) - The Flameshot Replacement
     bindsym $mod+Shift+s exec grim -g "$(slurp)" - | satty --filename - --output-filename ~/Screenshots/$(date +%Y%m%d-%H%M%S).png
 
+    # 1b. INSTANT fullscreen freeze (no region picker - for disappearing menus/tooltips)
+    bindsym $mod+Ctrl+Shift+s exec grim - | satty --filename - --output-filename ~/Screenshots/$(date +%Y%m%d-%H%M%S).png
+
     # 2. Capture a region and copy directly to clipboard (No editing, super fast)
     bindsym Print exec grim -g "$(slurp)" - | wl-copy && notify-send "Screenshot" "Region copied to clipboard"
     # 3. Capture the entire screen and save to file
