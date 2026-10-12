@@ -1,0 +1,16 @@
+#!/bin/bash
+# ssh-unlock-vault - one GUI passphrase prompt per login, then the bwh key
+# lives in the stable agent for every terminal (foot AND tabby) until logout.
+# Safe to run anytime: exits silently if the key is already loaded.
+SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/ssh-agent.socket"
+export SSH_AUTH_SOCK="$SOCK"
+FPR=$(ssh-keygen -lf ~/.ssh/bwh.pub 2>/dev/null | awk '{print $2}')
+if [ -n "$FPR" ] && ssh-add -l 2>/dev/null | grep -q "$FPR"; then
+  exit 0  # already unlocked
+fi
+SSH_ASKPASS=/usr/bin/ksshaskpass ssh-add ~/.ssh/bwh < /dev/null >/dev/null 2>&1
+if ssh-add -l 2>/dev/null | grep -q "${FPR:-bwh}"; then
+  notify-send "ssh" "vault key unlocked for this login" 2>/dev/null
+else
+  notify-send -u critical "ssh" "key still locked (dialog cancelled?)" 2>/dev/null
+fi

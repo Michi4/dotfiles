@@ -421,6 +421,7 @@ exec mako
 exec libinput-gestures-setup start
 #exec swayrd
 exec --no-startup-id copyq --start-server
+exec --no-startup-id /home/michi/bin/ssh-unlock-vault
 
 exec nm-applet --indicator
 exec blueman-applet
