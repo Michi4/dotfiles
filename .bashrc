@@ -52,6 +52,7 @@ alias ll="eza -l --icons=always --color=always"
 
 # Reuse running ssh-agent or start a new one
 export SSH_ENV="$HOME/.ssh/agent-environment"
+export STABLE_SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/ssh-agent.socket"
 
 function start_agent {
     echo "Initialising new SSH agent..."
@@ -60,7 +61,18 @@ function start_agent {
     . "${SSH_ENV}" > /dev/null
 }
 
-if [ -f "${SSH_ENV}" ]; then
+# Prefer the stable systemd socket when it answers (rc 0 = has keys,
+# rc 1 = alive but empty); else per-shell fallback.
+STABLE_RC=2
+if [ -S "$STABLE_SOCK" ]; then
+  SSH_AUTH_SOCK="$STABLE_SOCK" ssh-add -l >/dev/null 2>&1
+  STABLE_RC=$?
+fi
+if [ "$STABLE_RC" = 0 ] || [ "$STABLE_RC" = 1 ]; then
+    export SSH_AUTH_SOCK="$STABLE_SOCK"
+    # top up keys silently - stdin closed so this can NEVER prompt
+    ssh-add -q ~/.ssh/id_ed25519 ~/.ssh/bwh < /dev/null 2>/dev/null || true
+elif [ -f "${SSH_ENV}" ]; then
     . "${SSH_ENV}" > /dev/null
     ps -ef | grep ${SSH_AGENT_PID} | grep ssh-agent$ > /dev/null || {
         start_agent
@@ -523,4 +535,7 @@ alias vpn-netns="sudo $HOME/.local/bin/vpn-netns"
 
 # personal scripts (laptop-backup, paste-redact, ...)
 export PATH="$PATH:$HOME/bin"
-export SSH_AUTH_SOCK="$HOME/.ssh/agent.sock"
+
+# bun
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
