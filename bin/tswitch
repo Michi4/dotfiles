@@ -89,12 +89,14 @@ main() {
   while true; do
     echo "--- profiles ---"
     tailscale switch --list
-    echo "--- [e]xit-nodes  [s]tatus  [q]uit, or name/number ---"
+    echo "--- [e]xit-nodes  [s]tatus  [u]p/[d]own  [q]uit, or name/number ---"
     read -rp "tswitch> " c
     case "$c" in
       [Qq]|"") exit 0 ;;
       [Ee]) exit_menu ;;
       [Ss]) tailscale status | head -12 ;;
+      [Uu]) tailscale up && echo "tailscale up" ;;
+      [Dd]) tailscale down && echo "tailscale down (u to revive)" ;;
       [0-9]*)
         id=$(tailscale switch --list | sed -n "$((c+1))p" | awk '{print $1}')
         [ -n "$id" ] && switch_to "$id" && exit 0
