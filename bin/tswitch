@@ -1,24 +1,108 @@
 #!/bin/bash
-# tswitch - flip between tailscale login profiles (tailnets).
-# No arg: numbered menu. Arg: profile id or tailnet substring.
-# Example: tswitch proserver1
-list=$(tailscale switch --list 2>/dev/null | tail -n +2)
-[ -z "$list" ] && { echo "no profiles"; exit 1; }
-if [ -n "$1" ]; then
-  id=$(grep -i "$1" <<< "$list" | head -1 | awk '{print $1}')
-  [ -z "$id" ] && { echo "no profile matching '$1'"; echo "$list"; exit 1; }
-else
-  echo "$list" | nl -w2 -s') '
-  read -rp "switch to [#] (q aborts): " n
-  [[ "$n" =~ ^[Qq]$ ]] && exit 0
-  id=$(echo "$list" | sed -n "${n}p" | awk '{print $1}')
-  [ -z "$id" ] && { echo "bad pick"; exit 1; }
-fi
-echo "switching..."
-if timeout 60 tailscale switch "$id"; then
-  sleep 2 && tailscale status | head -8
-else
-  echo "switch timed out - target profile likely needs fresh login:"
-  echo "  tailscale login  (then approve in browser, then retry)"
-  exit 1
-fi
+# tswitch - flip tailscale tailnets + exit nodes, fuzzily.
+#   tswitch              numbered menu (profiles, exit nodes, status)
+#   tswitch <anything>   fuzzy match: ids, tailnets, accounts, aliases, typos
+# Aliases live in TS_ALIASES below - extend freely. Matching priority:
+# exact id > exact tailnet/account > alias > substring > subsequence > typo.
+TS_ALIASES="brunner=hs.bwh.at bwh=hs.bwh.at proserver1=head.proserver1.at proserver=head.proserver1.at ps1=head.proserver1.at"
+export TS_ALIASES
+
+pick_profile() { # pick_profile <query> -> prints id or nothing
+  export TS_QUERY="$1"
+  python3 <<'EOF'
+import json, os, subprocess, difflib
+q = os.environ.get("TS_QUERY", "").lower()
+raw = subprocess.run(["tailscale", "switch", "--list"], capture_output=True, text=True).stdout
+profs = []
+for line in raw.splitlines()[1:]:
+    parts = line.split()
+    if len(parts) >= 3:
+        profs.append({"id": parts[0], "tailnet": parts[1], "account": parts[2]})
+aliases = dict(kv.split("=", 1) for kv in os.environ.get("TS_ALIASES", "").split())
+cands = []
+for p in profs:
+    names = [p["id"], p["tailnet"], p["account"].rstrip("*")]
+    names += [k for k, v in aliases.items() if v == p["tailnet"]]
+    best, how = 0.0, ""
+    for n in names:
+        nl = n.lower()
+        if q == nl:
+            s, h = 4.0, "exact"
+        elif nl.startswith(q):
+            s, h = 3.0, "prefix"
+        elif q in nl:
+            s, h = 2.0, "substring"
+        else:
+            it = iter(nl)
+            if all(c in it for c in q):
+                s, h = 1.5, "subsequence"
+            else:
+                s, h = 0.0, ""
+                r = difflib.SequenceMatcher(None, q, nl).ratio()
+                if r >= 0.55:
+                    s, h = 0.9 + r * 0.5, "typo"  # 1.17-1.4: below subsequence, above the gate
+        if s > best:
+            best, how = s, h
+    cands.append((best, how, p["id"], p["tailnet"]))
+cands.sort(reverse=True)
+if cands and cands[0][0] >= 1.0 and (len(cands) == 1 or cands[0][0] > cands[1][0] or cands[0][2] == cands[1][2]):
+    print(cands[0][2])
+EOF
+}
+
+switch_to() { # switch_to <id>
+  if timeout 60 tailscale switch "$1"; then
+    sleep 2 && tailscale status | head -6
+  else
+    echo "switch timed out - target likely needs fresh login:"
+    echo "  tailscale login  (approve in browser, then retry)"
+    return 1
+  fi
+}
+
+exit_menu() { # exit-node management
+  mapfile -t nodes < <(tailscale exit-node list 2>/dev/null | grep -vE "^\s*$|No exit|--" | head -10)
+  if [ "${#nodes[@]}" -eq 0 ]; then
+    echo "no exit nodes on this tailnet"
+    return 0
+  fi
+  printf '%s\n' "${nodes[@]}" | nl -w2 -s') '
+  echo " $(( ${#nodes[@]} + 1 ))) off (no exit node)"
+  read -rp "route via [#] (q aborts): " n
+  [[ "$n" =~ ^[Qq]$ ]] && return 0
+  if [ "$n" -eq $(( ${#nodes[@]} + 1 )) ] 2>/dev/null; then
+    tailscale set --exit-node= && echo "exit node off"
+  else
+    name=$(echo "${nodes[$((n-1))]}" | awk '{print $2}')
+    [ -n "$name" ] && tailscale set --exit-node="$name" && echo "exit via $name"
+  fi
+}
+
+main() {
+  if [ -n "$1" ]; then
+    id=$(pick_profile "$1")
+    [ -z "$id" ] && { echo "nothing matches '$1':"; tailscale switch --list; exit 1; }
+    switch_to "$id"
+    exit $?
+  fi
+
+  while true; do
+    echo "--- profiles ---"
+    tailscale switch --list
+    echo "--- [e]xit-nodes  [s]tatus  [q]uit, or name/number ---"
+    read -rp "tswitch> " c
+    case "$c" in
+      [Qq]|"") exit 0 ;;
+      [Ee]) exit_menu ;;
+      [Ss]) tailscale status | head -12 ;;
+      [0-9]*)
+        id=$(tailscale switch --list | sed -n "$((c+1))p" | awk '{print $1}')
+        [ -n "$id" ] && switch_to "$id" && exit 0
+        echo "bad number"
+        ;;
+      *) id=$(pick_profile "$c"); [ -n "$id" ] && switch_to "$id" && exit 0 || echo "no match" ;;
+    esac
+  done
+}
+
+[[ "${BASH_SOURCE[0]}" == "$0" ]] && main "$@"
