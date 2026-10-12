@@ -1,0 +1,17 @@
+#!/bin/bash
+# tswitch - flip between tailscale login profiles (tailnets).
+# No arg: numbered menu. Arg: profile id or tailnet substring.
+# Example: tswitch proserver1
+list=$(tailscale switch --list 2>/dev/null | tail -n +2)
+[ -z "$list" ] && { echo "no profiles"; exit 1; }
+if [ -n "$1" ]; then
+  id=$(grep -i "$1" <<< "$list" | head -1 | awk '{print $1}')
+  [ -z "$id" ] && { echo "no profile matching '$1'"; echo "$list"; exit 1; }
+else
+  echo "$list" | nl -w2 -s') '
+  read -rp "switch to [#] (q aborts): " n
+  [[ "$n" =~ ^[Qq]$ ]] && exit 0
+  id=$(echo "$list" | sed -n "${n}p" | awk '{print $1}')
+  [ -z "$id" ] && { echo "bad pick"; exit 1; }
+fi
+tailscale switch "$id" && sleep 2 && tailscale status | head -8
