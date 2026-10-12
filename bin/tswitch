@@ -14,4 +14,11 @@ else
   id=$(echo "$list" | sed -n "${n}p" | awk '{print $1}')
   [ -z "$id" ] && { echo "bad pick"; exit 1; }
 fi
-tailscale switch "$id" && sleep 2 && tailscale status | head -8
+echo "switching..."
+if timeout 60 tailscale switch "$id"; then
+  sleep 2 && tailscale status | head -8
+else
+  echo "switch timed out - target profile likely needs fresh login:"
+  echo "  tailscale login  (then approve in browser, then retry)"
+  exit 1
+fi
