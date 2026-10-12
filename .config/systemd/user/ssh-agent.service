@@ -1,0 +1,12 @@
+[Unit]
+Description=Stable SSH agent socket for shells and GUI apps
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ssh-agent -D -a %t/ssh-agent.socket
+ExecStartPost=/bin/sh -c 'SSH_AUTH_SOCK=%t/ssh-agent.socket ssh-add -q $HOME/.ssh/id_ed25519 2>/dev/null || true'
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
