@@ -105,7 +105,7 @@ gaps outer 0
 # Toggle keep-awake mode (Mod+Shift+T)
 #bindsym $mod+Shift+t exec bash -c 'STATE_FILE=/tmp/sway_awake_state; if [ -f "$STATE_FILE" ]; then rm "$STATE_FILE"; pkill swayidle; swayidle -w timeout 600 "swaylock -f -c 000000" timeout 100 "swaymsg \"output * power off\"" resume "swaymsg \"output * power on\"" before-sleep "swaylock -f -c 000000" & disown; notify-send "Sleep Enabled" "Device will now auto-sleep again."; else touch "$STATE_FILE"; pkill swayidle; notify-send "Stay Awake Enabled" "Device will stay awake indefinitely."; fi'
 
-bindsym $mod+s exec swaylock -f -c 000000; sleep 1; systemctl suspend
+bindsym $mod+s exec bash -c 'swaylock -f -c 000000; sleep 1; systemctl suspend'
 bindsym $mod+p exec nwg-displays
 
 # Adaptive idle: 1min on battery / 5min on AC - managed by idle-manager.sh
