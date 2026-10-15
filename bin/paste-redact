@@ -17,6 +17,7 @@ import html
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import tempfile
@@ -64,17 +65,24 @@ _SERVER_CACHE = {"up": None, "at": 0.0}
 
 
 def ensure_server(cfg, ttl=120):
-    """True if ollama answers. Tries starting the system service once when
-    down (passwordless sudo); the verdict is cached briefly per process."""
+    """True if ollama answers. Starts the system service if down; if the
+    service claims active but never listens (wedged), restarts it once.
+    The verdict is cached briefly per process."""
     now = time.monotonic()
     if _SERVER_CACHE["up"] is not None and now - _SERVER_CACHE["at"] < ttl:
         return _SERVER_CACHE["up"]
     url = cfg["ollama_url"]
     up = list_models(url, timeout=3) is not None
     if not up:
+        can_sudo = False
+        was_active = False
         try:
             if subprocess.run(["sudo", "-n", "true"],
                               capture_output=True, timeout=5).returncode == 0:
+                can_sudo = True
+                was_active = subprocess.run(
+                    ["sudo", "-n", "systemctl", "is-active", "ollama"],
+                    capture_output=True, timeout=5).returncode == 0
                 subprocess.run(["sudo", "-n", "systemctl", "start", "ollama"],
                                capture_output=True, timeout=60)
         except Exception as ex:
@@ -84,6 +92,20 @@ def ensure_server(cfg, ttl=120):
                 up = True
                 break
             time.sleep(1)
+        if not up and can_sudo and was_active:
+            # active but never listens -> wedged process: one restart
+            print("ollama active but not listening, restarting service",
+                  file=sys.stderr)
+            try:
+                subprocess.run(["sudo", "-n", "systemctl", "restart", "ollama"],
+                               capture_output=True, timeout=60)
+            except Exception as ex:
+                print("ollama restart failed (%s)" % ex, file=sys.stderr)
+            for _ in range(15):
+                if list_models(url, timeout=3) is not None:
+                    up = True
+                    break
+                time.sleep(1)
     _SERVER_CACHE.update(up=up, at=time.monotonic())
     return up
 
@@ -324,11 +346,15 @@ VETO_RX.append(re.compile(r"^[A-Z]{2,10}-\d{2,}$"))  # WNC-20237597 (JIRA-style)
 
 def vetoed(secret):
     s = secret.strip()
-    if s.lower() in VETO_WORDS:
+    if s.lower() in VETO_WORDS or s.lower() in _IDENTITY_WORDS:
         return True
     m = re.match(r"^([A-Za-z\xe4\xf6\xfc\xc4\xd6\xdc\xdf]+)(\d+)$", s)
     if m and m.group(1).lower() in VETO_WORDS:
         return True  # --password2 / user1: CLI flag names, not secrets
+    if re.fullmatch(r"[a-z]{3,}", s):
+        return True  # single lowercase word (tool/command names like
+        # fastfetch, curl output labels) - never a credential on its own.
+        # (Multi-word passphrases contain spaces and are unaffected.)
     if any(rx.match(s) for rx in VETO_RX):
         return True
     if " " in s and any(rx.search(s) for rx in CONTAINS_VETO_RX):
@@ -344,6 +370,24 @@ VETO_WORDS = {"token", "password", "passwort", "secret", "geheimnis", "key",
               "cert", "expire", "expiry", "serial", "curl", "dig", "grep",
               "wget", "ssh", "openssl", "notbefore", "notafter", "fingerprint",
               "cn", "ou", "dc"}
+
+# own identity is never a credential: exact username/hostname matches are
+# always context (prompts, banners, fastfetch headers), never secrets
+def _identity_words():
+    words = set()
+    try:
+        words.add(os.path.basename(os.path.expanduser("~")).lower())
+    except Exception:
+        pass
+    try:
+        words.add(socket.gethostname().split(".")[0].lower())
+    except Exception:
+        pass
+    words.discard("")
+    return words
+
+
+_IDENTITY_WORDS = _identity_words()
 
 
 def secret_candidates(secret):
@@ -622,6 +666,26 @@ def stage_llm(text, taken, cfg, strict, llm_stats, second=False, no_compact=Fals
     return match_spans(spans, text, taken, cfg, llm_stats)
 
 
+# bare user@host without domain, slashes or spaces (shell prompts, tool
+# headers) - shaped like an identity, decided per occurrence line-by-line
+_IDENTITY_RX = re.compile(r"^[^@\s/:]+@[^@\s/:.]+$")
+
+# user@host tokens literally seen on shell prompt lines this run: proven
+# context, never credentials (reset on every redact() call)
+_PROMPT_IDENTS = set()
+
+
+def is_strong_secret(s):
+    """A long/high-entropy exact string is never log noise, however often it
+    repeats: once identified, it must be redacted EVERYWHERE. (Hostnames,
+    IPs, hashes etc. never reach here - vetoed() filters those first.)"""
+    if len(s) >= 16:
+        return True
+    classes = sum((any(c.islower() for c in s), any(c.isupper() for c in s),
+                   any(c.isdigit() for c in s), any(not c.isalnum() for c in s)))
+    return (len(s) >= 10 and classes >= 3) or (len(s) >= 8 and classes >= 4)
+
+
 def match_spans(spans, text, taken, cfg, llm_stats):
     """Match LLM-returned secrets against the full text. Returns repls list."""
     repls = []
@@ -651,8 +715,27 @@ def match_spans(spans, text, taken, cfg, llm_stats):
                 idx += 1
             if not hits:
                 continue
-            if len(hits) > max_occ:
-                # a "secret" occurring that often is log noise, not a secret
+            if _IDENTITY_RX.match(cand) or cand.lower() in _PROMPT_IDENTS:
+                # bare user@host without domain (shell prompts, fastfetch
+                # headers) or an identity seen on a prompt line this run:
+                # context, never a credential - unless the very same line
+                # talks about credentials ("db password is P@ss..").
+                kept = []
+                for (s, e) in hits:
+                    ls = text.rfind("\n", 0, s) + 1
+                    le = text.find("\n", e)
+                    if le < 0:
+                        le = len(text)
+                    if SUSPICIOUS_RX.search(text[ls:le]):
+                        kept.append((s, e))
+                if not kept:
+                    llm_stats.setdefault("vetoed_identity", []).append(cand[:60])
+                    matched = True
+                    break
+                hits = kept
+            if len(hits) > max_occ and not is_strong_secret(cand):
+                # frequent WEAK token ("token", "test123") is log noise, not a
+                # secret; strong values are always redacted, at every position
                 llm_stats.setdefault("capped", []).append(cand[:60])
                 matched = True
                 break
@@ -663,6 +746,30 @@ def match_spans(spans, text, taken, cfg, llm_stats):
             break
         if not matched:
             llm_stats["unmatched"].append(secret[:60])
+    return dedupe(repls)
+
+
+def stage_sweep(text, applied, taken):
+    """Final guarantee: every value already proven to be a secret is redacted
+    EVERYWHERE - including repeats outside gitleaks line segments or missed
+    by per-chunk LLM passes. Short values match standalone only, never inside
+    longer words (a 6-char code must not eat "xabcdef")."""
+    repls = []
+    seen_vals = set()
+    for a in applied:
+        orig = a.get("original") or ""
+        if len(orig) < 4 or orig in seen_vals:
+            continue
+        seen_vals.add(orig)
+        if len(orig) >= 12:
+            rx = re.compile(re.escape(orig))
+        else:
+            rx = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(orig)
+                            + r"(?![A-Za-z0-9_])")
+        for m in rx.finditer(text):
+            if not overlapping(taken, m.start(), m.end()):
+                repls.append((m.start(), m.end(), a["label"]))
+                taken.append((m.start(), m.end()))
     return dedupe(repls)
 
 
@@ -680,6 +787,13 @@ def redact(text, cfg, strict=False, no_compact=False):
     if not text:
         stats["timings"]["total"] = 0.0
         return "", [], stats
+    global _PROMPT_IDENTS
+    _PROMPT_IDENTS = set()
+    for _line in text.split("\n"):
+        if PROMPT_RX.match(_line):
+            for _tok in re.findall(r"[A-Za-z0-9_][A-Za-z0-9_.-]*@[A-Za-z0-9.-]+",
+                                   _line):
+                _PROMPT_IDENTS.add(_tok.lower())
 
     # custom regex first (fast, sync) - its tags are visible to the next stages
     taken = []
@@ -804,6 +918,17 @@ def redact(text, cfg, strict=False, no_compact=False):
             taken = tag_spans(text)
             stats["stages"]["llm-micro"] = len(applied) - n0
             stats["timings"]["llm_micro"] = time.perf_counter() - t0
+
+    # final sweep: every proven secret value vanishes from the whole text,
+    # no matter which stage found it and where else it repeats
+    t0 = time.perf_counter()
+    taken = tag_spans(text)
+    s_repls = stage_sweep(text, applied, taken)
+    n0 = len(applied)
+    text = apply_all(text, s_repls, "sweep", applied)
+    taken = tag_spans(text)
+    stats["stages"]["sweep"] = len(applied) - n0
+    stats["timings"]["sweep"] = time.perf_counter() - t0
 
     stats["timings"]["total"] = time.perf_counter() - t_all
     return text, applied, stats
@@ -1075,7 +1200,12 @@ def run_selftest(cfg):
     # ticket/order references are intentionally vetoed (user: pure noise)
     for t in ("Ticket#732285", "WNC-20237597", "Issue#123"):
         assert vetoed(t), t
-    print("PASS veto (hostnames/IPs/tickets blocked, passwords pass)")
+    # own identity is context, never a credential (fastfetch prompts/headers)
+    assert _IDENTITY_WORDS, "identity words must resolve"
+    for ident in sorted(_IDENTITY_WORDS):
+        assert vetoed(ident), ident
+        assert vetoed(ident.upper()), ident
+    print("PASS veto (hostnames/IPs/tickets/identity blocked, passwords pass)")
     # first shell prompt keeps machine context once, later ones collapse
     n = normalize("[michi@hp835 ~]$ echo hi\n[michi@hp835 ~]$ echo yo\n")
     assert n.startswith("[michi@hp835 ~]$ echo hi\n$ echo yo"), repr(n)
@@ -1109,6 +1239,28 @@ def run_selftest(cfg):
     except ValueError:
         pass
     print("PASS json-repair (fences, truncation, garbage)")
+    # sweep: a proven secret must vanish EVERYWHERE, even repeats the finder
+    # never saw (other gitleaks segments, other chunks); short values only
+    # standalone, never inside longer words
+    t = "api key Hunter2abc! here\nnothing secret in this line\nagain Hunter2abc! below\n"
+    appl = []
+    t2 = apply_all(t, [(8, 19, "password")], "llm", appl)
+    assert "[REDACTED_PASSWORD]" in t2
+    rep = stage_sweep(t2, appl, tag_spans(t2))
+    t3 = apply_all(t2, rep, "sweep", appl)
+    assert "Hunter2abc!" not in t3, t3
+    print("PASS sweep (strong repeat redacted everywhere)")
+    t = "latest test here\ntest again\ncontest entry\n"
+    appl = []
+    t2 = apply_all(t, [(7, 11, "token")], "llm", appl)
+    rep = stage_sweep(t2, appl, tag_spans(t2))
+    t3 = apply_all(t2, rep, "sweep", appl)
+    assert "latest" in t3 and "contest" in t3 and t3.count("[REDACTED_TOKEN]") == 2, t3
+    print("PASS sweep (short values only standalone)")
+    assert is_strong_secret("SummerField99!") and is_strong_secret("Xk2#mQ9!vL4$z")
+    assert not is_strong_secret("password") and not is_strong_secret("test123")
+    assert not is_strong_secret("rottag.com") and not is_strong_secret("192.168.1.1")
+    print("PASS strong-secret (cap exemption only for strong values)")
     testdir = os.path.join(CFG_DIR, "tests")
     ok = True
     for name, expected in SELFTEST_CASES:
