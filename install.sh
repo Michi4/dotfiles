@@ -51,7 +51,7 @@ install_packages() {
 
         # Fonts
         ttf-jetbrains-mono-nerd
-        noto-fonts noto-fonts-emoji
+        noto-fonts noto-fonts-cjk noto-fonts-emoji noto-fonts-extra
 
         # Dev
         git github-cli
@@ -174,6 +174,9 @@ link .config/swayr/config.toml
 # System
 link .config/btop/btop.conf
 link .config/libinput-gestures.conf
+
+# Fonts (reject web icon fonts from system fallback so emoji stay color)
+link .config/fontconfig/fonts.conf
 
 # Themes
 link .config/gtk-3.0/settings.ini
