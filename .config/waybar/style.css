@@ -8,6 +8,12 @@
   color: #ffffff;
 }
 
+/* Per-output sizing. The 4K desktop is 2560 logical px wide; the portrait
+   monitors are 1050. Keep one bar layout, but give the wide screen more
+   readable text and the narrow screens a compact fit. */
+window.DP-5 * { font-size: 17px; }
+window.DP-7 *, window.DP-6 * { font-size: 14px; }
+
 window#waybar {
   background-color: #222222;
   border-bottom: 0px solid #81a1c1;

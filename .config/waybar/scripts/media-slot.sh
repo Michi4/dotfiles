@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 idx=${1:-0}
-cache="/tmp/waybar-media-cache-$idx.txt"
+out="${WAYBAR_OUTPUT_NAME:-}"
+safe_out=$(printf '%s' "${out:-global}" | tr -c 'A-Za-z0-9_.-' '_' | sed 's/_*$//')
+cache="/tmp/waybar-media-cache-$idx.txt"                 # shared: player used by click/volume
+out_cache="/tmp/waybar-media-cache-${safe_out}-$idx.txt" # per-output display text
 state="/tmp/waybar-media-state"
 lock="/tmp/waybar-media.lock"
 
@@ -9,11 +12,12 @@ lock="/tmp/waybar-media.lock"
 # fresh, show the volume centered in the last title width instead of the title.
 volshow="/tmp/waybar-media-volshow-$idx.txt"
 now_ts=$(date +%s)
-if [ -f "$volshow" ] && [ -f "$cache" ]; then
+if [ -f "$volshow" ] && { [ -f "$out_cache" ] || [ -f "$cache" ]; }; then
   read -r vs_ts vs_pct < "$volshow" 2>/dev/null
   if [ -n "$vs_ts" ] && [ $((now_ts - vs_ts)) -lt 2 ]; then
     v0=" $vs_pct%"
-    { read -r _; read -r last_text; read -r last_tip; read -r last_cls; } < "$cache"
+    read_cache="$out_cache"; [ -f "$read_cache" ] || read_cache="$cache"
+    { read -r _; read -r last_text; read -r last_tip; read -r last_cls; } < "$read_cache"
     [ -n "$last_cls" ] || last_cls="Playing"
     n=${#last_text}; m=${#v0}
     if [ -n "$last_text" ] && [ "$m" -lt "$n" ]; then
@@ -33,11 +37,16 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 CSS_FILE="$ROOT_DIR/style.css"
-BUDGET_CACHE="/tmp/waybar-media-budget.txt"
+BUDGET_CACHE="/tmp/waybar-media-budget-${safe_out}.txt"
 
 get_font_size() {
-  local fs
-  fs=$(grep -m1 -oE 'font-size:[[:space:]]*[0-9]+px' "$CSS_FILE" 2>/dev/null | grep -oE '[0-9]+')
+  local fs=""
+  # Prefer the rule for this output, e.g. "window.DP-5 * { font-size: 17px; }".
+  if [ -n "$out" ]; then
+    fs=$(grep -oE "window\\.${out}[^{]*\\{[^}]*font-size:[[:space:]]*[0-9]+px" "$CSS_FILE" 2>/dev/null \
+      | tail -1 | grep -oE 'font-size:[[:space:]]*[0-9]+px' | grep -oE '[0-9]+')
+  fi
+  [ -z "$fs" ] && fs=$(grep -m1 -oE 'font-size:[[:space:]]*[0-9]+px' "$CSS_FILE" 2>/dev/null | grep -oE '[0-9]+')
   echo "${fs:-15}"
 }
 
@@ -53,6 +62,17 @@ get_smallest_width() {
   if [ -z "$w" ] && command -v xrandr >/dev/null 2>&1; then
     w=$(xrandr --current 2>/dev/null | grep -w connected | grep -oE '[0-9]+x[0-9]+\+' | cut -d'x' -f1 | sort -n | head -1)
   fi
+  echo "$w"
+}
+
+# Width of the output this bar is drawn on. Waybar passes the monitor name to
+# every custom-module exec through WAYBAR_OUTPUT_NAME.
+get_output_width() {
+  local w=""
+  if [ -n "$out" ] && command -v swaymsg >/dev/null 2>&1; then
+    w=$(swaymsg -t get_outputs 2>/dev/null | jq -r --arg out "$out" '.[] | select(.name==$out and .active==true) | .rect.width' 2>/dev/null | head -1)
+  fi
+  [ -z "$w" ] && w=$(get_smallest_width)
   echo "$w"
 }
 
@@ -97,13 +117,15 @@ get_reserve_px() {
   # tray: measured from the real icon count
   right=$(( right + $(get_tray_px "$char_px") ))
   # workspaces sit on the left, before the media slots
-  wscount=$(swaymsg -t get_workspaces 2>/dev/null | jq 'length' 2>/dev/null)
+  # Only reserve space for workspaces this bar actually shows. With no
+  # WAYBAR_OUTPUT_NAME (manual run), keep the old all-outputs estimate.
+  wscount=$(swaymsg -t get_workspaces 2>/dev/null | jq --arg out "$out" '[.[] | select($out == "" or .output == $out)] | length' 2>/dev/null)
   [ -z "$wscount" ] && wscount=9
   ws=$(( wscount * (char_px + 16) + 10 ))
   echo $(( right + ws ))
 }
 
-# Budget is recomputed at most every 30s and shared by all slots.
+# Budget is recomputed at most every 30s and shared by all slots on this output.
 get_media_budget() {
   local width char_px reserve spare budget now cached_ts cached_val
   now=$(date +%s)
@@ -113,7 +135,7 @@ get_media_budget() {
       echo "$cached_val"; return
     fi
   fi
-  width=$(get_smallest_width)
+  width=$(get_output_width)
   [ -z "$width" ] && width=1920
   char_px=$(awk "BEGIN{printf \"%d\", ($(get_font_size) * 0.6) + 0.5}")
   [ "$char_px" -lt 1 ] && char_px=1
@@ -122,7 +144,12 @@ get_media_budget() {
   reserve=$(get_reserve_px "$char_px")
   spare=$(( width - reserve ))
   budget=$(( spare / char_px ))
-  [ "$budget" -lt 12 ] && budget=12
+  # Even if the conservative reserve leaves less, keep enough room for a
+  # normal single title; six active slots still share this total.
+  local floor=$(( width / 45 ))
+  [ "$floor" -lt 12 ] && floor=12
+  [ "$floor" -gt 24 ] && floor=24
+  [ "$budget" -lt "$floor" ] && budget=$floor
   [ "$budget" -gt 130 ] && budget=130
   echo "$now $budget" > "$BUDGET_CACHE"
   echo "$budget"
@@ -141,7 +168,9 @@ escape() {
 
 # Read our cache
 cached_player=""
-if [ -f "$cache" ]; then
+if [ -f "$out_cache" ]; then
+  cached_player=$(sed -n '1p' "$out_cache")
+elif [ -f "$cache" ]; then
   cached_player=$(sed -n '1p' "$cache")
 fi
 
@@ -272,13 +301,18 @@ if [ -n "$player" ] && [ -n "$full_text" ]; then
     if [ "$disp_len" -lt "${#text}" ]; then
       text="${text:0:$((disp_len - 3))}..."
     fi
-    tooltip="$text"
+    # Keep the full title in the tooltip even when the bar ellipsizes it.
+    tooltip="$full_text"
     [ -n "$album" ] && tooltip="$tooltip · $album"
     printf '%s\n' "$player" "$text" "$tooltip" "$status" > "$cache"
+    printf '%s\n' "$player" "$text" "$tooltip" "$status" > "$out_cache"
     echo "{\"text\":\"$text\",\"tooltip\":\"$tooltip\",\"class\":\"$status\"}"
     exit 0
   fi
 fi
 
-rm -f "$cache"
+rm -f "$out_cache"
+# Keep the shared player cache while another bar may still be showing it;
+# only drop it once this slot has no player at all.
+[ -z "$player" ] && rm -f "$cache"
 echo '{"text":"","class":"stopped"}'
